@@ -1,0 +1,32 @@
+# 私钥 — 绝对不能上传
+tools/private_key.pem
+
+# 环境变量（含 Bot Token、收款地址）
+telegram_bot/.env
+
+# 数据库（含客户订单）
+telegram_bot/orders.db
+
+# Python 缓存
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# 前端依赖
+frontend/node_modules/
+frontend/dist/
+
+# 构建产物
+dist/
+build/
+*.spec
+
+# 编辑器配置
+.claude/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+desktop.ini
