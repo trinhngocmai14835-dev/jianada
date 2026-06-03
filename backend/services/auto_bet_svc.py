@@ -349,7 +349,6 @@ def _betting_loop(page, account: str, cfg: dict, stop_event: threading.Event, lo
             log(f"[{account}] 📊 开奖: {draw} | 利润: {profit:+.0f}")
             # 结算上一局（pending_settlement 在下注成功后置 True，bet_placed 重置不影响它）
             if pending_settlement and targets[0] is not None:
-                total_cost = BASE_BET * N * 3
                 total_win = 0.0
                 for i in range(3):
                     hit = draw[i] in targets[i]

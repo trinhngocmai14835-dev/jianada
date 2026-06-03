@@ -27,6 +27,8 @@ def _get_chrome() -> str | None:
         r"C:\Program Files\Google\Chrome\Application\chrome.exe",
         r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
         os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
     ]:
         if candidate and os.path.isfile(candidate):
             return candidate
@@ -200,8 +202,9 @@ def _get_countdown(page) -> int:
                     continue
                 if ":" in s:
                     parts = s.split(":")
-                    if len(parts) == 2 and parts[0].strip().isdigit() and parts[1].strip().isdigit():
-                        return int(parts[0].strip()) * 60 + int(parts[1].strip())
+                    m_part, s_part = parts[-2].strip(), parts[-1].strip()
+                    if m_part.isdigit() and s_part.isdigit():
+                        return int(m_part) * 60 + int(s_part)
                 if s.isdigit():
                     return int(s)
             except Exception:

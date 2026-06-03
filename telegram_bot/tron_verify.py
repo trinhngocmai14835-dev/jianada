@@ -27,6 +27,7 @@ async def verify_usdt_payment(
         return False, "交易未确认，请稍后重试"
 
     transfers = data.get("trc20TransferInfo", [])
+    amount_mismatch = None
     for t in transfers:
         contract_ok = t.get("contract_address", "") == USDT_CONTRACT
         addr_ok = t.get("to_address", "").upper() == wallet.upper()
@@ -35,7 +36,8 @@ async def verify_usdt_payment(
         amount = float(t.get("amount", 0)) / (10 ** USDT_DECIMALS)
         if abs(amount - expected_usdt) <= tolerance:
             return True, f"验证成功，收款 {amount} USDT"
-        else:
-            return False, f"金额不符：收到 {amount} USDT，期望 {expected_usdt} USDT"
+        amount_mismatch = amount
 
+    if amount_mismatch is not None:
+        return False, f"金额不符：收到 {amount_mismatch} USDT，期望 {expected_usdt} USDT"
     return False, "未找到匹配记录（目标地址或合约不匹配）"

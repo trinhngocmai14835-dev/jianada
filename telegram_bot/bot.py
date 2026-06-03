@@ -191,9 +191,12 @@ async def recv_txhash(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
         return WAIT_TX
 
-    mid = ctx.user_data["machine_id"]
-    pid = ctx.user_data["plan_id"]
-    plan = ctx.user_data["plan"]
+    mid = ctx.user_data.get("machine_id")
+    pid = ctx.user_data.get("plan_id")
+    plan = ctx.user_data.get("plan")
+    if not mid or not pid or not plan:
+        await update.message.reply_text("❌ 会话已过期，请重新 /buy")
+        return ConversationHandler.END
     user = update.effective_user
 
     order_id = db.create_order(
