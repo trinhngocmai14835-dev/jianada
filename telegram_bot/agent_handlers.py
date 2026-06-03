@@ -105,7 +105,10 @@ async def agent_recv_plan(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
     license_key = generate_license_for_machine(mid, plan["days"])
-    db.deduct_agent_card(uid, plan_id, license_key, mid)
+    ok = db.deduct_agent_card(uid, plan_id, license_key, mid)
+    if not ok:
+        await query.edit_message_text("❌ 库存已被并发消耗，请重新 /genkey")
+        return ConversationHandler.END
 
     await query.edit_message_text(
         f"✅ *授权码已生成*\n\n"

@@ -6,6 +6,7 @@ from typing import Callable, Optional
 
 class TaskManager:
     _instance: Optional["TaskManager"] = None
+    _init_lock = threading.Lock()
 
     def __init__(self):
         self._tasks: dict = {}
@@ -14,7 +15,9 @@ class TaskManager:
     @classmethod
     def get(cls) -> "TaskManager":
         if cls._instance is None:
-            cls._instance = cls()
+            with cls._init_lock:
+                if cls._instance is None:
+                    cls._instance = cls()
         return cls._instance
 
     def start(self, task_id: str, target: Callable, config: dict):

@@ -169,18 +169,21 @@ class Database:
             ).fetchone()
             return row["balance"] if row else qty
 
-    def deduct_agent_card(self, agent_id: int, plan_id: str, license_key: str, machine_id: str):
-        """扣减1张卡并写入发卡流水。"""
+    def deduct_agent_card(self, agent_id: int, plan_id: str, license_key: str, machine_id: str) -> bool:
+        """扣减1张卡并写入发卡流水。返回 False 表示库存不足（并发竞争导致）。"""
         with self._conn() as conn:
-            conn.execute(
+            cur = conn.execute(
                 "UPDATE agent_inventory SET balance = balance - 1 "
                 "WHERE agent_id=? AND plan_id=? AND balance > 0",
                 (agent_id, plan_id),
             )
+            if cur.rowcount == 0:
+                return False
             conn.execute(
                 "INSERT INTO agent_logs (agent_id, plan_id, machine_id, license_key) VALUES (?,?,?,?)",
                 (agent_id, plan_id, machine_id, license_key),
             )
+            return True
 
     def get_agent_logs(self, agent_id: int, limit: int = 20) -> list:
         with self._conn() as conn:
@@ -211,29 +214,29 @@ class Database:
 
     def get_latest_license_expiry(self, machine_id: str):
         """返回该机器所有有效授权码中最晚的到期 datetime，全部过期或无记录则返回 None。"""
-        from datetime import datetime
+        from datetime import datetime, timedelta
         mid = machine_id.upper()
         keys = []
         with self._conn() as conn:
-            row = conn.execute(
+            # 取 orders 和 agent_logs 各自最新一条，再取两者中到期最晚的
+            rows = conn.execute(
                 "SELECT license_key FROM orders WHERE machine_id=? AND status='confirmed' "
-                "ORDER BY id DESC LIMIT 1", (mid,),
-            ).fetchone()
-            if row:
-                keys.append(row["license_key"])
-            row = conn.execute(
-                "SELECT license_key FROM agent_logs WHERE machine_id=? ORDER BY id DESC LIMIT 1",
+                "ORDER BY id DESC LIMIT 20", (mid,),
+            ).fetchall()
+            keys.extend(r["license_key"] for r in rows)
+            rows = conn.execute(
+                "SELECT license_key FROM agent_logs WHERE machine_id=? ORDER BY id DESC LIMIT 20",
                 (mid,),
-            ).fetchone()
-            if row:
-                keys.append(row["license_key"])
+            ).fetchall()
+            keys.extend(r["license_key"] for r in rows)
 
         latest = None
         now = datetime.now()
         for key in keys:
             try:
                 expiry = datetime.strptime(key[:8], "%Y%m%d")
-                if expiry > now and (latest is None or expiry > latest):
+                # 到期日当天 23:59 前仍有效，与 validate_license 保持一致
+                if expiry + timedelta(days=1) > now and (latest is None or expiry > latest):
                     latest = expiry
             except Exception:
                 pass

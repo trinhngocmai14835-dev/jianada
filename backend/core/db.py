@@ -1,18 +1,28 @@
 import sqlite3
 import json
 import os
+from contextlib import contextmanager
 from datetime import datetime
 
 DB_PATH = os.path.join(os.path.expanduser('~'), '.betting_platform', 'data.db')
 
-
+@contextmanager
 def _conn():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    return sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def init_db():
     with _conn() as c:
+        c.execute("PRAGMA journal_mode=WAL")
         c.execute("""
             CREATE TABLE IF NOT EXISTS config (
                 key TEXT PRIMARY KEY,
@@ -27,7 +37,6 @@ def init_db():
                 activated_at TEXT
             )
         """)
-        c.commit()
 
 
 def get_config(key: str, default=None):
@@ -45,7 +54,6 @@ def set_config(key: str, value):
     serialized = json.dumps(value, ensure_ascii=False)
     with _conn() as c:
         c.execute("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)", (key, serialized))
-        c.commit()
 
 
 def get_license():
@@ -65,4 +73,3 @@ def save_license(key: str, expiry: str):
             "INSERT INTO license_info (key, expiry, activated_at) VALUES (?, ?, ?)",
             (key, expiry, datetime.now().isoformat()),
         )
-        c.commit()

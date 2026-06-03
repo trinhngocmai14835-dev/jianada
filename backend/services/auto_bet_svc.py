@@ -12,11 +12,37 @@ import threading
 import queue
 import shutil
 import os
+import subprocess
 from datetime import datetime
 from playwright.sync_api import sync_playwright
 
 
 # ─── 工具函数 ────────────────────────────────────────────────
+
+def _free_port(port, log=None):
+    """Kill any process occupying *port* so Chrome can bind to it cleanly."""
+    try:
+        out = subprocess.check_output(
+            ["netstat", "-ano"], stderr=subprocess.DEVNULL, text=True
+        )
+        killed = set()
+        for line in out.splitlines():
+            parts = line.split()
+            if len(parts) >= 5 and parts[1].endswith(f":{port}"):
+                try:
+                    pid = int(parts[-1])
+                    if pid > 0 and pid not in killed:
+                        subprocess.call(
+                            ["taskkill", "/PID", str(pid), "/F"],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                        )
+                        killed.add(pid)
+                        if log:
+                            log(f"[端口清理] 已终止占用端口{port}的进程(PID={pid})")
+                except ValueError:
+                    pass
+    except Exception:
+        pass
 
 def _solve_captcha(image_bytes: bytes) -> str:
     try:
@@ -48,6 +74,8 @@ def _get_chrome() -> str | None:
         r"C:\Program Files\Google\Chrome\Application\chrome.exe",
         r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
         os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
     ]:
         if candidate and os.path.isfile(candidate):
             return candidate
@@ -186,8 +214,8 @@ def _get_countdown(page) -> int:
             return -1
         s = frame.locator("#cdClose").inner_text(timeout=3000).strip()
         if ':' in s:
-            m, sec = s.split(':')
-            return int(m) * 60 + int(sec)
+            parts = s.split(':')
+            return int(parts[-2]) * 60 + int(parts[-1])
         return int(s) if s.isdigit() else 0
     except Exception:
         return -2
@@ -438,6 +466,7 @@ def _run_account(acc_info, config, entry_url, safe_code, chrome_path, stop_event
         "--window-size=1280,900",
     ]
 
+    _free_port(port, log)
     try:
         with sync_playwright() as p:
             kwargs = {"headless": False, "args": launch_args}

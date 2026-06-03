@@ -50,6 +50,9 @@ async def _broadcast_loop():
 
 @router.websocket("/ws/logs/{task_id}")
 async def ws_logs(ws: WebSocket, task_id: str):
+    if task_id not in _TASK_IDS:
+        await ws.close(code=1008)
+        return
     await ws.accept()
     _subscribers.setdefault(task_id, set())
     for msg in list(_history.get(task_id, [])):
