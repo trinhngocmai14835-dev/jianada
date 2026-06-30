@@ -15,6 +15,8 @@ import urllib.parse
 from datetime import datetime, date
 from playwright.sync_api import sync_playwright
 
+from services.auto_bet_svc import _sleep_interruptible
+
 POS_PREFIX = {"b1": "odds_B1QH", "b2": "odds_B2QH", "b3": "odds_B3QH"}
 
 
@@ -256,48 +258,54 @@ def _get_current_period(page) -> str | None:
 
 
 _FETCH_JS = """() => {
-    var results = [];
-    // 优先找 iframe 里的表格，其次找主文档
-    var docs = [document];
-    var frames = document.querySelectorAll('iframe, frame');
-    for (var fi = 0; fi < frames.length; fi++) {
-        try { if (frames[fi].contentDocument) docs.push(frames[fi].contentDocument); } catch(e) {}
+    // 按表头定位列：投注内容/下注金额/帐号/下注编号/彩种，逐行抓出每注金额
+    function pickCols(cells){
+        var idx={account:-1,content:-1,amount:-1,betId:-1,lottery:-1};
+        for(var h=0;h<cells.length;h++){
+            var t=(cells[h].innerText||'').trim();
+            if(idx.account<0 && (t.indexOf('帐号')>=0||t.indexOf('账号')>=0||t.indexOf('用户')>=0)) idx.account=h;
+            if(idx.content<0 && t.indexOf('投注内容')>=0) idx.content=h;
+            if(idx.amount<0 && (t.indexOf('下注金额')>=0||t.indexOf('投注金额')>=0)) idx.amount=h;
+            if(idx.betId<0 && (t.indexOf('下注编号')>=0||t.indexOf('注单号')>=0)) idx.betId=h;
+            if(idx.lottery<0 && t.indexOf('彩种')>=0) idx.lottery=h;
+        }
+        return idx;
     }
-    for (var di = 0; di < docs.length; di++) {
-        var trs = docs[di].querySelectorAll('table tr');
-        if (trs.length < 2) continue;
-        var hTds = trs[0].querySelectorAll('th, td');
-        var colAccount = -1;
-        for (var h = 0; h < hTds.length; h++) {
-            var t = (hTds[h].innerText || '').trim();
-            if (t.includes('帐号') || t.includes('账号') || t.includes('用户')) colAccount = h;
-        }
-        for (var i = 1; i < trs.length; i++) {
-            var tds = trs[i].querySelectorAll('td');
-            if (tds.length < 3) continue;
-            var period = '', account = '', rowText = '';
-            for (var k = 0; k < tds.length; k++) {
-                var txt = (tds[k].innerText || '').trim();
-                if (!period) {
-                    var mp = txt.match(/([0-9]{7,})/);
-                    if (mp && !txt.startsWith('N')) period = mp[1];
-                }
-                if (!account && (txt.includes('A盘') || txt.includes('B盘') || k === colAccount))
-                    account = txt.replace(/\\s+/g, '_');
-                // 拼接整行文字（包含span内容）用于后续多球解析
-                var sp = tds[k].querySelector('span');
-                rowText += ' ' + (sp ? sp.innerText.trim() : txt);
+    var docs=[document];
+    var frames=document.querySelectorAll('iframe, frame');
+    for(var fi=0;fi<frames.length;fi++){try{if(frames[fi].contentDocument)docs.push(frames[fi].contentDocument);}catch(e){}}
+    var results=[];
+    for(var di=0;di<docs.length;di++){
+        var tables=docs[di].querySelectorAll('table');
+        for(var ti=0;ti<tables.length;ti++){
+            var trs=tables[ti].querySelectorAll('tr');
+            if(trs.length<2) continue;
+            var idx=pickCols(trs[0].querySelectorAll('th, td'));
+            if(idx.content<0 || idx.amount<0) continue;  // 非注单明细表，跳过
+            for(var i=1;i<trs.length;i++){
+                var tds=trs[i].querySelectorAll('td');
+                if(tds.length<=idx.content || tds.length<=idx.amount) continue;
+                var content=(tds[idx.content].innerText||'').replace(/\\s+/g,' ').trim();
+                if(content.indexOf('球')<0) continue;
+                var amount=(tds[idx.amount].innerText||'').replace(/[^0-9.]/g,'');
+                var account=(idx.account>=0&&idx.account<tds.length)?(tds[idx.account].innerText||'').replace(/\\s+/g,'_').trim():'unknown';
+                var betId=(idx.betId>=0&&idx.betId<tds.length)?(tds[idx.betId].innerText||'').trim():'';
+                var period='';
+                if(idx.lottery>=0&&idx.lottery<tds.length){var ml=(tds[idx.lottery].innerText||'').match(/([0-9]{7,})/);if(ml)period=ml[1];}
+                if(!period){var rowAll='';for(var k=0;k<tds.length;k++)rowAll+=' '+(tds[k].innerText||'');var m2=rowAll.match(/([0-9]{7,})/);if(m2)period=m2[1];}
+                results.push({betId:betId,account:account||'unknown',period:period,content:content,amount:amount});
             }
-            if (!period || rowText.indexOf('\\u7403') < 0) continue;
-            results.push({account: account || 'unknown', period: period, content: rowText.trim()});
+            if(results.length>0) break;
         }
-        if (results.length > 0) break; // 找到数据就不再找其他 doc
+        if(results.length>0) break;
     }
     return results;
 }"""
 
 
 def _fetch_bets(page_a: object) -> dict:
+    """读注单明细，返回 {(账号,期号): [ {betId,pos,num,amount}, ... ]}。
+    amount = 客户该注下注金额（整数元），用于按倍数跟投与自算结算。"""
     try:
         items = page_a.evaluate(_FETCH_JS)
     except Exception:
@@ -308,16 +316,25 @@ def _fetch_bets(page_a: object) -> dict:
     groups: dict = {}
     for item in items:
         key = (item["account"], item["period"])
-        if key not in groups:
-            groups[key] = {"b1": [], "b2": [], "b3": []}
+        try:
+            amount = int(float(item.get("amount") or 0))
+        except (TypeError, ValueError):
+            amount = 0
+        if amount <= 0:
+            continue
+        bet_id = (item.get("betId") or "").strip()
         c = item["content"]
-        # 用 findall 拿到行内所有的"第X球【N】"组合
+        # 用 findall 拿到行内所有的"第X球【N】"组合（通常一行一个）
         pairs = re.findall(r"第\s*([一二三123])\s*球[^一二三1-3球]{0,20}?[〖【\[\(](\d)[〗】\]\)]", c)
         for pos_char, num_str in pairs:
             pos = pos_map.get(pos_char)
+            if not pos:
+                continue
             num = int(num_str)
-            if pos and num not in groups[key][pos]:
-                groups[key][pos].append(num)
+            # 无下注编号时退化用 球+号+金额 作去重键
+            uid = bet_id or f"{pos}{num}@{amount}"
+            groups.setdefault(key, []).append(
+                {"betId": uid, "pos": pos, "num": num, "amount": amount})
     return groups
 
 
@@ -368,28 +385,28 @@ def _refresh_page(rp) -> dict | None:
     try:
         changed = rp.evaluate(_SET_COUNT_JS)
         if changed:
-            time.sleep(3)   # 等 AJAX 刷新完表格
+            time.sleep(1.5)   # 等 AJAX 刷新完表格（已压缩以贴身跟投，漏的下一轮补）
         else:
-            time.sleep(2)
+            time.sleep(1)
     except Exception:
-        time.sleep(3)
+        time.sleep(1.5)
     try:
         return _fetch_bets(rp)
     except Exception:
         return None
 
 
-def _place_bet(page_b, bets_by_pos: dict, amount: int, log) -> bool:
+def _place_bet(page_b, bets_by_pos: dict, log) -> bool:
+    """bets_by_pos: {pos: {num: amount}}，每个号填各自金额（按倍数跟投后的金额）。"""
     frame = _get_iframe(page_b) or page_b
-    targets = []
-    for pos, nums in bets_by_pos.items():
+    pairs = []  # [[inputId, amountStr], ...]
+    for pos, num_amt in bets_by_pos.items():
         pfx = POS_PREFIX[pos]
-        for n in nums:
-            targets.append(f"{pfx}{n}")
-    if not targets:
+        for n, amt in num_amt.items():
+            pairs.append([f"{pfx}{n}", str(int(amt))])
+    if not pairs:
         return False
-    ids_json = str(targets)
-    amt_str = str(amount)
+    pairs_json = json.dumps(pairs)
     js_fill = f"""(function(){{
         var setVal=function(id,amt){{
             var el=document.getElementById(id);
@@ -399,8 +416,8 @@ def _place_bet(page_b, bets_by_pos: dict, amount: int, log) -> bool:
             el.dispatchEvent(new Event('input',{{bubbles:true}}));
             el.dispatchEvent(new Event('change',{{bubbles:true}}));
         }};
-        var ids={ids_json};
-        for(var i=0;i<ids.length;i++)setVal(ids[i],'{amt_str}');
+        var ps={pairs_json};
+        for(var i=0;i<ps.length;i++)setVal(ps[i][0],ps[i][1]);
     }})()"""
     try:
         frame.evaluate(js_fill)
@@ -450,14 +467,13 @@ class _Tracker:
         self.pending: dict = {}
         self.settled: set = set()
 
-    def record(self, period, port, bets, amount):
-        if period not in self.pending:
-            self.pending[period] = {}
-        if port not in self.pending[period]:
-            self.pending[period][port] = {"b1": set(), "b2": set(), "b3": set(), "amount": amount}
+    def record(self, period, port, bets):
+        """bets: {pos: {num: amount}}，按号记录各自金额用于结算。"""
+        slot = self.pending.setdefault(period, {}).setdefault(
+            port, {"b1": {}, "b2": {}, "b3": {}})
         for pos in ["b1", "b2", "b3"]:
-            for n in bets.get(pos, []):
-                self.pending[period][port][pos].add(n)
+            for n, amt in bets.get(pos, {}).items():
+                slot[pos][n] = amt
 
     def settle(self, period, draw_nums):
         if period in self.settled or period not in self.pending:
@@ -468,22 +484,21 @@ class _Tracker:
         period_profit = 0.0
         self.log(f"📒 结算期号: {period} | 开奖: {draw_nums}")
         for port, info in self.pending[period].items():
-            amt = info["amount"]
             pp = 0.0
             for pos, label in [("b1", "一球"), ("b2", "二球"), ("b3", "三球")]:
-                nums = info.get(pos, set())
-                if not nums:
+                num_amt = info.get(pos, {})
+                if not num_amt:
                     continue
-                bc = len(nums)
-                total_bet = bc * amt
+                total_bet = sum(num_amt.values())
                 rebate_v = total_bet * self.rebate
-                if draw[pos] in nums:
-                    win = amt * self.odds
+                d = draw[pos]
+                if d in num_amt:
+                    win = num_amt[d] * self.odds
                     bp = win - total_bet + rebate_v
-                    self.log(f"  [{port}] {label}: ✅中{draw[pos]} 赢{win:.2f}-投{total_bet}+退{rebate_v:.2f}={bp:+.2f}")
+                    self.log(f"  [{port}] {label}: ✅中{d} 赢{win:.2f}-投{total_bet}+退{rebate_v:.2f}={bp:+.2f}")
                 else:
                     bp = -total_bet + rebate_v
-                    self.log(f"  [{port}] {label}: ❌未中{draw[pos]} -{total_bet}+退{rebate_v:.2f}={bp:+.2f}")
+                    self.log(f"  [{port}] {label}: ❌未中{d} -{total_bet}+退{rebate_v:.2f}={bp:+.2f}")
                 pp += bp
             period_profit += pp
             self.log(f"  [{port}] 本期盈亏: {pp:+.2f}")
@@ -498,7 +513,7 @@ def run(config: dict, stop_event: threading.Event, log_queue: queue.Queue):
         log_queue.put({"time": datetime.now().strftime("%H:%M:%S"), "msg": msg})
 
     source_port = str(config.get("source_port", "9222"))
-    followers_cfg = config.get("followers", [{"port": "9223", "bet_amount": 100}])
+    followers_cfg = config.get("followers", [{"port": "9223", "multiplier": 1}])
     BET_START = config.get("bet_window_start", 120)
     BET_END = config.get("bet_window_end", 35)
     REFRESH = config.get("refresh_sec", 5)
@@ -506,8 +521,8 @@ def run(config: dict, stop_event: threading.Event, log_queue: queue.Queue):
     REBATE = config.get("rebate", 0.0073)
     entry_url = config.get("entry_url", "")
 
-    follower_str = ', '.join(f"{f['port']}({f['bet_amount']}元)" for f in followers_cfg)
-    log(f"跟投服务启动 | 采集端口:{source_port} | 跟投:{follower_str}")
+    follower_str = ', '.join(f"{f.get('port')}({f.get('multiplier', 1)}倍)" for f in followers_cfg)
+    log(f"跟投服务启动 | 采集端口:{source_port} | 跟投:{follower_str} | 模式:镜像全跟·按客户金额倍数")
 
     with sync_playwright() as p:
         # ── 步骤1：自动启动采集端口Chrome，连接后等待登录 ──────────
@@ -567,12 +582,17 @@ def run(config: dict, stop_event: threading.Event, log_queue: queue.Queue):
         followers = []
         for f_cfg in followers_cfg:
             port_b = str(f_cfg.get("port", "9223"))
-            bet_b = int(f_cfg.get("bet_amount", 100))
+            try:
+                mult = float(f_cfg.get("multiplier", 1))
+            except (TypeError, ValueError):
+                mult = 1.0
+            if mult <= 0:
+                mult = 1.0
             try:
                 bb = p.chromium.connect_over_cdp(f"http://127.0.0.1:{port_b}")
                 pg = _get_real_page(bb) or bb.contexts[0].pages[0]
-                followers.append((port_b, bet_b, bb, pg))
-                log(f"[B:{port_b}] 已连接 每注{bet_b}元")
+                followers.append((port_b, mult, bb, pg))
+                log(f"[B:{port_b}] 已连接 {mult}倍跟投")
             except Exception as e:
                 log(f"[B:{port_b}] ❌ 连接失败: {e}")
 
@@ -588,9 +608,8 @@ def run(config: dict, stop_event: threading.Event, log_queue: queue.Queue):
             pass
 
         tracker = _Tracker(ODDS, REBATE, log)
-        done_keys: dict = {}
+        done_set: set = set()   # 已成功跟投的 (跟投端口, 下注编号, 球, 号)，逐账号独立去重/重试
         total_bets = 0
-        bet_record: dict = {}
         last_draw = None
         last_settled = None
         bet_placed_this_period = False
@@ -622,7 +641,7 @@ def run(config: dict, stop_event: threading.Event, log_queue: queue.Queue):
                 if bet_placed_this_period and draw_nums != last_settled:
                     last_settled = draw_nums
                     bet_placed_this_period = False
-                    for per in sorted(bet_record.keys(), reverse=True):
+                    for per in sorted(tracker.pending.keys(), reverse=True):
                         if per not in tracker.settled:
                             tracker.settle(per, draw_nums)
                             break
@@ -637,7 +656,7 @@ def run(config: dict, stop_event: threading.Event, log_queue: queue.Queue):
             if cd <= BET_END:
                 if cd > 0:
                     log(f"🔒 封盘中(倒计时{cd}s)，等待开奖...")
-                    time.sleep(cd + 10)
+                    _sleep_interruptible(cd + 10, stop_event)
                 else:
                     time.sleep(5)
                 continue
@@ -674,56 +693,38 @@ def run(config: dict, stop_event: threading.Event, log_queue: queue.Queue):
             for (account, period), bets in all_groups.items():
                 if stop_event.is_set():
                     break
-                key = (account, period)
-                curr = {pos: set(bets[pos]) for pos in ["b1", "b2", "b3"]}
-                done = done_keys.get(key, {"b1": set(), "b2": set(), "b3": set()})
-                need = {pos: list(curr[pos] - done[pos]) for pos in ["b1", "b2", "b3"]}
-                need_total = sum(len(v) for v in need.values())
-                if need_total == 0:
-                    continue
 
-                # 期号验证
+                # 期号验证：报表期号需与投注页当前期号一致，避免跟到已封盘的旧期
                 bet_period = _get_current_period(cd_page)
                 if bet_period and bet_period != period:
                     log(f"  ⚠️  期号不匹配! 报表={period} 投注页={bet_period}，跳过")
                     continue
 
-                log(f"  [{account}] 期:{period} 待补{need_total}注")
-
-                if key not in done_keys:
-                    done_keys[key] = {"b1": set(), "b2": set(), "b3": set()}
-                for pos in ["b1", "b2", "b3"]:
-                    done_keys[key][pos].update(need[pos])
-
-                n_f = len(followers)
-                all_items = [(pos, n) for pos in ["b1", "b2", "b3"] for n in need[pos]]
-                buckets = [[] for _ in range(n_f)]
-                for idx, item in enumerate(all_items):
-                    buckets[idx % n_f].append(item)
-
-                for fi, (f_port, f_bet, f_browser, f_page) in enumerate(followers):
-                    if not buckets[fi]:
+                # 镜像全跟：每个跟投账号各自按倍数跟客户全部注单
+                # 按 (跟投端口, 下注编号, 球, 号) 独立去重 —— 客户每注每账号只跟一次，失败下次自动补
+                for f_port, f_mult, f_browser, f_page in followers:
+                    pending = [b for b in bets
+                               if (f_port, b["betId"], b["pos"], b["num"]) not in done_set]
+                    if not pending:
                         continue
                     my_bets: dict = {}
-                    for pos, n in buckets[fi]:
-                        my_bets.setdefault(pos, []).append(n)
+                    for b in pending:
+                        amt = max(1, int(round(b["amount"] * f_mult)))   # 客户金额×倍数
+                        my_bets.setdefault(b["pos"], {})[b["num"]] = amt
                     rp = _find_cd_page(f_browser) or _get_real_page(f_browser) or f_page
-                    ok = _place_bet(rp, my_bets, f_bet, log)
+                    ok = _place_bet(rp, my_bets, log)
                     if ok:
-                        total_bets += len(buckets[fi])
+                        for b in pending:
+                            done_set.add((f_port, b["betId"], b["pos"], b["num"]))
+                        total_bets += len(pending)
                         bet_placed_this_period = True
-                        log(f"    ✅ [{f_port}] 成功 {len(buckets[fi])}注×{f_bet}元 | 累计{total_bets}注")
-                        if period not in bet_record:
-                            bet_record[period] = {}
-                        if f_port not in bet_record[period]:
-                            bet_record[period][f_port] = {"b1": set(), "b2": set(), "b3": set(), "amount": f_bet}
-                        for pos, n in buckets[fi]:
-                            bet_record[period][f_port][pos].add(n)
-                        tracker.record(period, f_port, my_bets, f_bet)
+                        tracker.record(period, f_port, my_bets)
+                        amt_desc = ", ".join(
+                            f"{pos}:{'/'.join(str(a) for a in na.values())}"
+                            for pos, na in my_bets.items())
+                        log(f"    ✅ [{f_port}] {f_mult}倍 跟客户{len(pending)}注 [{amt_desc}] | 累计{total_bets}注")
                     else:
                         log(f"    ❌ [{f_port}] 失败，下次重试")
-                        for pos, n in buckets[fi]:
-                            done_keys[key][pos].discard(n)
                     time.sleep(1)
 
             time.sleep(REFRESH)

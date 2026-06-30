@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import {
   Card, Form, Input, InputNumber, Button, Space, Typography, Divider,
-  Row, Col, message, Tag, Collapse, Radio,
+  Row, Col, message, Tag, Collapse,
 } from 'antd'
 import { PlusOutlined, MinusCircleOutlined, PlayCircleOutlined, PauseCircleOutlined } from '@ant-design/icons'
 import { api } from '../api/client'
@@ -16,53 +16,122 @@ const STATUS_TAG = {
   stopped: <Tag color="default">已停止</Tag>,
 }
 
-// 条件赢冲输缩默认档位参数：老客户配置缺这些字段时用它补齐，保证表单有初值
-const COND_DEFAULTS = {
-  conditional_tiers: [
-    { base: 50, rush: 70 },
-    { base: 70, rush: 98 },
-    { base: 100, rush: 140 },
+const MIN_PER_POS = 1   // 每路至少选 1 个号（勾几个用几个，上不封顶）
+const ALL_NUMBERS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+const DEFAULTS = {
+  pos_numbers: [
+    [0, 1, 2, 3, 4, 5],
+    [0, 1, 2, 3, 4, 5],
+    [0, 1, 2, 3, 4, 5],
   ],
-  loss_thresholds: [2000, 3000],
-  sleep_periods: 3,
+  base_bet_amount: 500,
+  rush_bet_amount: 700,
 }
 
-export default function RushBetPage() {
+// 三路号码选择器：每路从 0~9 里任意勾选（勾几个用几个，至少 1 个）
+function NumberPicker({ value = [], onChange }) {
+  const toggle = (pos, n) => {
+    const cur = Array.isArray(value[pos]) ? value[pos] : []
+    let next
+    if (cur.includes(n)) {
+      next = cur.filter((x) => x !== n)
+    } else {
+      next = [...cur, n].sort((a, b) => a - b)
+    }
+    const all = [0, 1, 2].map((p) => (p === pos ? next : (Array.isArray(value[p]) ? value[p] : [])))
+    onChange?.(all)
+  }
+
+  return (
+    <div>
+      {[0, 1, 2].map((pos) => {
+        const cur = Array.isArray(value[pos]) ? value[pos] : []
+        const ok = cur.length >= MIN_PER_POS
+        return (
+          <div key={pos} style={{ marginBottom: 12 }}>
+            <Space style={{ marginBottom: 6 }}>
+              <Text strong>球{pos + 1}</Text>
+              <Text type={ok ? 'success' : 'danger'} style={{ fontSize: 12 }}>
+                已选 {cur.length} 个{ok ? '' : '（至少选 1 个）'}
+              </Text>
+            </Space>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {ALL_NUMBERS.map((n) => {
+                const sel = cur.includes(n)
+                return (
+                  <Button
+                    key={n}
+                    size="small"
+                    type={sel ? 'primary' : 'default'}
+                    onClick={() => toggle(pos, n)}
+                    style={{
+                      width: 36,
+                      ...(sel ? { background: '#fa8c16', borderColor: '#fa8c16' } : {}),
+                    }}
+                  >
+                    {n}
+                  </Button>
+                )
+              })}
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+export default function PickBetPage() {
   const [form] = Form.useForm()
-  const mode = Form.useWatch('strategy_mode', form) || 'conditional'
   const [status, setStatus] = useState('stopped')
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
 
   const refresh = async () => {
     const s = await api.getStatus()
-    setStatus(s.rushbet || 'stopped')
+    setStatus(s.pickbet || 'stopped')
   }
 
   useEffect(() => {
-    api.getRushBetConfig().then((cfg) => form.setFieldsValue({ ...COND_DEFAULTS, ...cfg }))
+    api.getPickBetConfig().then((cfg) => form.setFieldsValue({ ...DEFAULTS, ...cfg }))
     refresh()
     const t = setInterval(refresh, 3000)
     return () => clearInterval(t)
   }, [])
 
+  // 校验三路各自至少选 1 个号（勾几个用几个）
+  const validatePicks = () => {
+    const picks = form.getFieldValue('pos_numbers') || []
+    for (let i = 0; i < 3; i++) {
+      if (!Array.isArray(picks[i]) || picks[i].length < MIN_PER_POS) {
+        message.error(`球${i + 1} 至少选 1 个号`)
+        return false
+      }
+    }
+    return true
+  }
+
   const handleSave = async () => {
     try {
       const vals = await form.validateFields()
+      if (!validatePicks()) return false
       setSaving(true)
-      await api.saveRushBetConfig(vals)
+      await api.savePickBetConfig(vals)
       message.success('配置已保存')
+      return true
     } catch {
       message.error('请检查表单填写')
+      return false
     } finally {
       setSaving(false)
     }
   }
 
   const handleStart = async () => {
-    await handleSave()
+    const ok = await handleSave()
+    if (!ok) return
     setLoading(true)
-    const res = await api.startRushBet()
+    const res = await api.startPickBet()
     message.info(res.message)
     setLoading(false)
     if (res.ok) setStatus('running')
@@ -71,7 +140,7 @@ export default function RushBetPage() {
 
   const handleStop = async () => {
     setLoading(true)
-    const res = await api.stopRushBet()
+    const res = await api.stopPickBet()
     message.info(res.message)
     setLoading(false)
     refresh()
@@ -83,7 +152,7 @@ export default function RushBetPage() {
     <div style={{ padding: 24 }}>
       <Space style={{ marginBottom: 24, width: '100%', justifyContent: 'space-between' }} align="center">
         <Space>
-          <Title level={4} style={{ margin: 0 }}>赢冲输缩 — 3路4球</Title>
+          <Title level={4} style={{ margin: 0 }}>自选号·赢冲输缩 — 3路自选</Title>
           {STATUS_TAG[status]}
         </Space>
         <Space>
@@ -152,78 +221,37 @@ export default function RushBetPage() {
                   </Form.List>
                 </Panel>
 
-                <Panel header="🔥 注码策略" key="strategy">
-                  <Form.Item label="策略模式" name="strategy_mode" initialValue="conditional">
-                    <Radio.Group optionType="button" buttonStyle="solid">
-                      <Radio.Button value="conditional">条件赢冲输缩（档位）</Radio.Button>
-                      <Radio.Button value="simple">固定赢冲输缩（原版）</Radio.Button>
-                    </Radio.Group>
-                  </Form.Item>
-
-                  {mode === 'conditional' ? (
-                    <div style={{
-                      background: '#fff7e6', border: '1px solid #ffd591', borderRadius: 8,
-                      padding: '12px 14px', marginBottom: 16,
-                    }}>
-                      <Text strong style={{ color: '#d46b08' }}>条件赢冲输缩 — 档位注码（可手动修改）</Text>
-                      <Row gutter={8} style={{ marginTop: 10, marginBottom: 4, fontSize: 12, color: '#8c6d1f' }}>
-                        <Col span={3} />
-                        <Col span={6}>一阶底注(元)</Col>
-                        <Col span={6}>二阶赢冲(元)</Col>
-                        <Col span={9}>累计亏损升档(元)</Col>
-                      </Row>
-                      {[0, 1, 2].map((i) => (
-                        <Row gutter={8} key={i} align="middle" style={{ marginBottom: 8 }}>
-                          <Col span={3}><Text strong>档{i + 1}</Text></Col>
-                          <Col span={6}>
-                            <Form.Item name={['conditional_tiers', i, 'base']} rules={[{ required: true, message: '必填' }]} style={{ marginBottom: 0 }}>
-                              <InputNumber style={{ width: '100%' }} min={1} />
-                            </Form.Item>
-                          </Col>
-                          <Col span={6}>
-                            <Form.Item name={['conditional_tiers', i, 'rush']} rules={[{ required: true, message: '必填' }]} style={{ marginBottom: 0 }}>
-                              <InputNumber style={{ width: '100%' }} min={1} />
-                            </Form.Item>
-                          </Col>
-                          <Col span={9}>
-                            {i < 2 ? (
-                              <Form.Item name={['loss_thresholds', i]} rules={[{ required: true, message: '必填' }]} style={{ marginBottom: 0 }}>
-                                <InputNumber style={{ width: '100%' }} min={1} placeholder={`>此值升档${i + 2}`} />
-                              </Form.Item>
-                            ) : (
-                              <Text type="secondary" style={{ fontSize: 12 }}>封顶档（不再升）</Text>
-                            )}
-                          </Col>
-                        </Row>
-                      ))}
-                      <Row gutter={8} align="middle" style={{ marginTop: 8 }}>
-                        <Col span={9}>
-                          <Form.Item label="升档前休眠 (期)" name="sleep_periods" style={{ marginBottom: 0 }}
-                            tooltip="升档后先跳过这么多期不下注，再用新档位开打">
-                            <InputNumber style={{ width: '100%' }} min={0} />
-                          </Form.Item>
-                        </Col>
-                        <Col span={15}>
-                          <div style={{ color: '#614700', fontSize: 12, paddingTop: 28, lineHeight: 1.5 }}>
-                            回正(累计利润≥0)立即归档1；档内每球独立赢冲输缩（中→二阶 / 不中→一阶）
-                          </div>
-                        </Col>
-                      </Row>
+                <Panel header="🎯 选号 & 注码" key="strategy">
+                  <div style={{
+                    background: '#fff7e6', border: '1px solid #ffd591', borderRadius: 8,
+                    padding: '12px 14px', marginBottom: 16,
+                  }}>
+                    <Text strong style={{ color: '#d46b08' }}>三路自选号（每路点选号码，勾几个用几个，至少 1 个）</Text>
+                    <div style={{ marginTop: 12 }}>
+                      <Form.Item name="pos_numbers" noStyle rules={[{ required: true }]}>
+                        <NumberPicker />
+                      </Form.Item>
                     </div>
-                  ) : (
-                    <Row gutter={16}>
-                      <Col span={12}>
-                        <Form.Item label="一阶底注 (元)" name="base_bet_amount" tooltip="首次或输后的注码">
-                          <InputNumber style={{ width: '100%' }} min={1} />
-                        </Form.Item>
-                      </Col>
-                      <Col span={12}>
-                        <Form.Item label="二阶赢冲 (元)" name="rush_bet_amount" tooltip="命中一次后升阶使用的注码">
-                          <InputNumber style={{ width: '100%' }} min={1} />
-                        </Form.Item>
-                      </Col>
-                    </Row>
-                  )}
+                  </div>
+
+                  <Row gutter={16}>
+                    <Col span={12}>
+                      <Form.Item label="一阶底注 (元)" name="base_bet_amount" tooltip="首次或输后的注码"
+                        rules={[{ required: true }]}>
+                        <InputNumber style={{ width: '100%' }} min={1} />
+                      </Form.Item>
+                    </Col>
+                    <Col span={12}>
+                      <Form.Item label="二阶赢冲 (元)" name="rush_bet_amount" tooltip="命中一次后升阶使用的注码"
+                        rules={[{ required: true }]}>
+                        <InputNumber style={{ width: '100%' }} min={1} />
+                      </Form.Item>
+                    </Col>
+                  </Row>
+                  <div style={{ color: '#614700', fontSize: 12, marginBottom: 12, lineHeight: 1.5 }}>
+                    每球独立赢冲输缩：中→升二阶 / 不中→回一阶
+                  </div>
+
                   <Row gutter={16}>
                     <Col span={12}>
                       <Form.Item label="开始时间 (时)" name="run_start_hour">
@@ -269,7 +297,7 @@ export default function RushBetPage() {
 
         <Col xs={24} lg={12}>
           <Card title="实时日志" style={{ borderRadius: 12 }}>
-            <LogViewer taskId="rushbet" running={isRunning} />
+            <LogViewer taskId="pickbet" running={isRunning} />
           </Card>
         </Col>
       </Row>

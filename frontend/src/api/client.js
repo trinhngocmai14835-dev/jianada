@@ -20,6 +20,8 @@ export const api = {
   saveAutoBetConfig: (data) => req('POST', '/config/autobet', data),
   getRushBetConfig: () => req('GET', '/config/rushbet'),
   saveRushBetConfig: (data) => req('POST', '/config/rushbet', data),
+  getPickBetConfig: () => req('GET', '/config/pickbet'),
+  savePickBetConfig: (data) => req('POST', '/config/pickbet', data),
   getFollowBetConfig: () => req('GET', '/config/followbet'),
   saveFollowBetConfig: (data) => req('POST', '/config/followbet', data),
 
@@ -31,6 +33,8 @@ export const api = {
   stopAutoBet: () => req('POST', '/autobet/stop'),
   startRushBet: () => req('POST', '/rushbet/start'),
   stopRushBet: () => req('POST', '/rushbet/stop'),
+  startPickBet: () => req('POST', '/pickbet/start'),
+  stopPickBet: () => req('POST', '/pickbet/stop'),
   startFollowBet: () => req('POST', '/followbet/start'),
   stopFollowBet: () => req('POST', '/followbet/stop'),
   openFollowerBrowser: (port, entry_url) => req('POST', '/followbet/open-browser', { port: String(port), entry_url: entry_url || '' }),

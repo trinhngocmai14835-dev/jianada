@@ -93,7 +93,7 @@ export default function FollowBetPage() {
 
       <Alert
         type="info"
-        message="使用前置条件：主账号（采集端口）需已登录并打开注单明细报表页；跟投账号需已登录并停留在下注页面。"
+        message="使用前置条件：主账号（采集端口）需已登录并打开注单明细报表页（可提前打开空的「未结明细」页挂着，无需等客户下注）；跟投账号需已登录并停留在下注页面。客户一下注即自动贴身跟投。"
         style={{ marginBottom: 16 }}
         showIcon
       />
@@ -153,14 +153,14 @@ export default function FollowBetPage() {
                                 </Form.Item>
                               </Col>
                               <Col span={12}>
-                                <Form.Item name={[name, 'bet_amount']} label="单注金额" rules={[{ required: true }]}>
-                                  <InputNumber style={{ width: '100%' }} placeholder="100" min={1} />
+                                <Form.Item name={[name, 'multiplier']} label="跟投倍数" rules={[{ required: true }]} tooltip="每注金额 = 客户该注金额 × 倍数，支持小数">
+                                  <InputNumber style={{ width: '100%' }} placeholder="2" min={0.1} step={0.5} />
                                 </Form.Item>
                               </Col>
                             </Row>
                           </Card>
                         ))}
-                        <Button type="dashed" onClick={() => add({ port: '9223', bet_amount: 100 })} block icon={<PlusOutlined />}>
+                        <Button type="dashed" onClick={() => add({ port: '9223', multiplier: 1 })} block icon={<PlusOutlined />}>
                           添加跟投账号
                         </Button>
                       </>
@@ -188,6 +188,11 @@ export default function FollowBetPage() {
                     <Col span={12}>
                       <Form.Item label="退水比例" name="rebate">
                         <InputNumber style={{ width: '100%' }} step={0.0001} />
+                      </Form.Item>
+                    </Col>
+                    <Col span={12}>
+                      <Form.Item label="刷新间隔 (秒)" name="refresh_sec" tooltip="轮询客户注单明细的间隔，越小跟得越贴身（建议 2~3 秒，过小会频繁刷新报表页）">
+                        <InputNumber style={{ width: '100%' }} min={1} max={30} />
                       </Form.Item>
                     </Col>
                   </Row>

@@ -23,6 +23,11 @@ dist/
 build/
 *.spec
 
+# 构建日志与工具缓存
+build_output.txt
+build_error.txt
+.codegraph/
+
 # 编辑器配置
 .claude/
 

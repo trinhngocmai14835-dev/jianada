@@ -34,7 +34,8 @@ def generate_license(machine_id: str, days: int, base_date: datetime = None) -> 
     from cryptography.hazmat.primitives.asymmetric import padding
 
     private_key = _load_private_key()
-    start = base_date if (base_date and base_date > datetime.now()) else datetime.now()
+    # 到期日当天仍算有效（与 validate_license 一致），当天买卡也能叠加
+    start = base_date if (base_date and base_date.date() >= datetime.now().date()) else datetime.now()
     expiry = (start + timedelta(days=days)).strftime("%Y%m%d")
     data = f"{machine_id.upper()}|{expiry}".encode()
     sig = private_key.sign(data, padding.PKCS1v15(), hashes.SHA256())
@@ -64,7 +65,7 @@ def main():
         days = int(input("有效天数 (例如 30): ").strip())
 
     key = generate_license(machine_id.upper(), days)
-    expiry = (datetime.now() + timedelta(days=days)).strftime("%Y%m%d")
+    expiry = key.split(".")[0]  # 直接从授权码中提取，与签名内容完全一致
     print(f"\n✅ 生成成功！")
     print(f"   机器码:   {machine_id.upper()}")
     print(f"   到期日:   {expiry}（{days}天后）")

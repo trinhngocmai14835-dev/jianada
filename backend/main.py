@@ -14,21 +14,63 @@ if sys.stderr is None:
 
 # ─── 启动前检测 ────────────────────────────────────────────────
 
-def _check_port(port: int = 8080):
+def _port_in_use(port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        if s.connect_ex(("127.0.0.1", port)) == 0:
-            import tkinter as tk
-            from tkinter import messagebox
-            root = tk.Tk()
-            root.withdraw()
-            messagebox.showerror(
-                "启动失败",
-                f"端口 {port} 已被占用，程序无法启动。\n\n"
-                "请检查是否有另一个「自动下单系统Pro」正在运行，\n"
-                "关闭后重新双击启动。"
-            )
-            root.destroy()
-            sys.exit(1)
+        return s.connect_ex(("127.0.0.1", port)) == 0
+
+
+def _is_our_app(port: int) -> bool:
+    """占用该端口的是否就是本程序的另一个实例（通过页面标题识别）。"""
+    try:
+        import urllib.request
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=2) as r:
+            body = r.read(8192).decode("utf-8", "ignore")
+        return "自动下单系统" in body
+    except Exception:
+        return False
+
+
+def _msgbox(title: str, text: str, icon: int = 0x40):
+    """Windows 原生消息框，不依赖 tkinter（frozen EXE 里 tkinter 可能未打包）。
+    icon: 0x40=信息(i) / 0x10=错误(x)。"""
+    try:
+        import ctypes
+        MB_OK = 0x0
+        MB_TOPMOST = 0x00040000
+        MB_SETFOREGROUND = 0x00010000
+        ctypes.windll.user32.MessageBoxW(
+            0, text, title, MB_OK | icon | MB_TOPMOST | MB_SETFOREGROUND
+        )
+    except Exception:
+        pass
+
+
+def _check_port(port: int = 8080):
+    if not _port_in_use(port):
+        return  # 端口空闲，正常启动
+
+    import webbrowser
+    if _is_our_app(port):
+        # 占用方就是本程序的另一个实例 —— 直接复用，打开界面而不是报错退出
+        webbrowser.open(f"http://localhost:{port}")
+        _msgbox(
+            "程序已在运行",
+            "「自动下单系统Pro」已经在运行，已为你打开它的界面。\n\n"
+            "无需重复启动。\n\n"
+            "如果想重新启动：先在任务管理器结束所有「自动下单系统Pro」进程，再双击本程序。",
+            0x40,
+        )
+        sys.exit(0)
+
+    # 端口被其它程序占用
+    _msgbox(
+        "启动失败",
+        f"端口 {port} 被【其它程序】占用，本程序无法启动。\n\n"
+        "请关闭占用该端口的程序后重试；\n"
+        "若不确定是哪个程序，重启电脑后再双击启动。",
+        0x10,
+    )
+    sys.exit(1)
 
 
 def _system_chrome_ok() -> bool:
@@ -187,13 +229,22 @@ if os.path.exists(_assets_dir):
     app.mount("/assets", StaticFiles(directory=_assets_dir), name="assets")
 
 
+# index.html 禁止缓存：换版本后浏览器立即加载新页面（新 index 引用新哈希的 JS），
+# 避免客户因缓存看到旧界面。带哈希的 assets/*.js 不受影响（可缓存，本就不可变）。
+_NO_CACHE = {
+    "Cache-Control": "no-cache, no-store, must-revalidate",
+    "Pragma": "no-cache",
+    "Expires": "0",
+}
+
+
 # SPA fallback — 所有其他 GET 请求返回 index.html
 @app.get("/", include_in_schema=False)
 @app.get("/{full_path:path}", include_in_schema=False)
 async def spa(full_path: str = ""):
     index = os.path.join(STATIC_DIR, "index.html")
     if os.path.exists(index):
-        return FileResponse(index, media_type="text/html")
+        return FileResponse(index, media_type="text/html", headers=_NO_CACHE)
     return {"error": "前端未构建，请先运行 build.bat"}
 
 

@@ -8,6 +8,7 @@ from core.task_manager import TaskManager
 from services.auto_bet_svc import run as auto_bet_run
 from services.follow_bet_svc import run as follow_bet_run, _launch_source_browser
 from services.rush_bet_svc import run as rush_bet_run
+from services.pick_bet_svc import run as pick_bet_run
 
 router = APIRouter()
 
@@ -29,31 +30,76 @@ DEFAULT_AUTOBET = {
     "rebate_rate": 0.0073,
     "tg_token": "",
     "tg_chat_id": "",
+    # 封盘/开奖时间参数（实测加拿大2.0：cdClose峰值~135s，封盘→开奖恒73s）
+    "bet_window_min": 60,
+    "bet_window_max": 120,
+    "close_buffer": 10,
+    "draw_delay": 73,
 }
 
 DEFAULT_RUSHBET = {
     "entry_url": "https://166.tt",
     "safe_code": "",
     "accounts": [{"account": "", "password": "", "port": 9222}],
+    "strategy_mode": "conditional",
     "base_bet_amount": 500,
     "rush_bet_amount": 700,
+    # 条件赢冲输缩档位参数（可在前端手动修改）
+    "conditional_tiers": [
+        {"base": 50, "rush": 70},
+        {"base": 70, "rush": 98},
+        {"base": 100, "rush": 140},
+    ],
+    "loss_thresholds": [2000, 3000],
+    "sleep_periods": 3,
     "run_start_hour": 9,
     "run_end_hour": 21,
     "daily_stop_loss": 29000,
     "take_profit": 25000,
     "odds": 9.92,
     "rebate_rate": 0.0073,
+    # 封盘/开奖时间参数（随平台节奏变动时在此调）
+    # 实测加拿大2.0：cdClose峰值~135s，封盘→开奖恒为73s，整期~208s
+    "bet_window_min": 60,    # 距封盘倒计时落在 [min,max] 才下注（峰值135>120，窗口有效）
+    "bet_window_max": 120,
+    "close_buffer": 10,      # 延时后仍需 >该秒数才下注，否则判封盘太快
+    "draw_delay": 73,        # 封盘到开奖的间隔，下注后睡 remain+该值（实测73s）
+}
+
+DEFAULT_PICKBET = {
+    "entry_url": "https://166.tt",
+    "safe_code": "",
+    "accounts": [{"account": "", "password": "", "port": 9222}],
+    # 三路各自独立的 6 个号码（0~9），固定每期投注
+    "pos_numbers": [
+        [0, 1, 2, 3, 4, 5],
+        [0, 1, 2, 3, 4, 5],
+        [0, 1, 2, 3, 4, 5],
+    ],
+    "base_bet_amount": 500,   # 一阶底注
+    "rush_bet_amount": 700,   # 二阶赢冲
+    "run_start_hour": 9,
+    "run_end_hour": 21,
+    "daily_stop_loss": 29000,
+    "take_profit": 25000,
+    "odds": 9.92,
+    "rebate_rate": 0.0073,
+    # 封盘/开奖时间参数（实测加拿大2.0：cdClose峰值~135s，封盘→开奖恒73s）
+    "bet_window_min": 60,
+    "bet_window_max": 120,
+    "close_buffer": 10,
+    "draw_delay": 73,
 }
 
 DEFAULT_FOLLOWBET = {
     "entry_url": "",
     "source_port": "9222",
-    "followers": [{"port": "9223", "bet_amount": 100}],
+    "followers": [{"port": "9223", "multiplier": 1}],  # 倍数跟投：每注=客户金额×倍数
     "odds": 9.92,
     "rebate": 0.0073,
     "bet_window_start": 120,
     "bet_window_end": 35,
-    "refresh_sec": 5,
+    "refresh_sec": 3,   # 注单明细轮询间隔(秒)，越小跟得越贴身（但刷新越频繁）
 }
 
 # ── 授权 ──────────────────────────────────────────────────────
@@ -84,7 +130,8 @@ def activate_license(req: ActivateRequest):
 
 @router.get("/config/autobet")
 def get_autobet_config():
-    return get_config("autobet_config", DEFAULT_AUTOBET)
+    # 合并默认值：老客户已保存的配置可能缺少新增字段（封盘/开奖时间参数），用默认补齐
+    return {**DEFAULT_AUTOBET, **get_config("autobet_config", {})}
 
 
 @router.post("/config/autobet")
@@ -118,7 +165,8 @@ def debug_queue(task_id: str):
 
 @router.get("/config/rushbet")
 def get_rushbet_config():
-    return get_config("rushbet_config", DEFAULT_RUSHBET)
+    # 合并默认值：老客户已保存的配置可能缺少新增字段（档位/阈值/休眠），用默认补齐
+    return {**DEFAULT_RUSHBET, **get_config("rushbet_config", {})}
 
 
 @router.post("/config/rushbet")
@@ -129,9 +177,36 @@ def save_rushbet_config(data: dict):
     return {"ok": True}
 
 
+@router.get("/config/pickbet")
+def get_pickbet_config():
+    # 合并默认值：老配置缺新增字段时用默认补齐
+    return {**DEFAULT_PICKBET, **get_config("pickbet_config", {})}
+
+
+@router.post("/config/pickbet")
+def save_pickbet_config(data: dict):
+    existing = get_config("pickbet_config", DEFAULT_PICKBET)
+    existing.update(data)
+    set_config("pickbet_config", existing)
+    return {"ok": True}
+
+
+def _normalize_followbet(cfg: dict) -> dict:
+    """迁移老配置：跟投账号从固定金额(bet_amount)改为倍数(multiplier)。
+    缺 multiplier 的旧 follower 补默认 1 倍，并去掉废弃的 bet_amount。"""
+    for f in (cfg.get("followers") or []):
+        if not isinstance(f, dict):
+            continue
+        if f.get("multiplier") in (None, ""):
+            f["multiplier"] = 1
+        f.pop("bet_amount", None)
+    return cfg
+
+
 @router.get("/config/followbet")
 def get_followbet_config():
-    return get_config("followbet_config", DEFAULT_FOLLOWBET)
+    # 合并默认值 + 迁移老的 bet_amount → multiplier
+    return _normalize_followbet({**DEFAULT_FOLLOWBET, **get_config("followbet_config", {})})
 
 
 @router.post("/config/followbet")
@@ -144,19 +219,32 @@ def save_followbet_config(data: dict):
 
 # ── 任务控制 ──────────────────────────────────────────────────
 
+def _check_license():
+    """返回 (ok: bool, msg: str)，任务启动前调用"""
+    lic = get_license()
+    if not lic:
+        return False, "未激活授权码，请先激活"
+    valid, msg, _ = validate_license(lic["key"])
+    return valid, msg
+
+
 @router.get("/status")
 def get_status():
     tm = TaskManager.get()
     return {
         "autobet": tm.status("autobet"),
         "rushbet": tm.status("rushbet"),
+        "pickbet": tm.status("pickbet"),
         "followbet": tm.status("followbet"),
     }
 
 
 @router.post("/autobet/start")
 def start_autobet():
-    cfg = get_config("autobet_config", DEFAULT_AUTOBET)
+    ok, msg = _check_license()
+    if not ok:
+        return {"ok": False, "message": msg}
+    cfg = {**DEFAULT_AUTOBET, **get_config("autobet_config", {})}
     ok, msg = TaskManager.get().start("autobet", auto_bet_run, cfg)
     return {"ok": ok, "message": msg}
 
@@ -169,7 +257,10 @@ def stop_autobet():
 
 @router.post("/rushbet/start")
 def start_rushbet():
-    cfg = get_config("rushbet_config", DEFAULT_RUSHBET)
+    ok, msg = _check_license()
+    if not ok:
+        return {"ok": False, "message": msg}
+    cfg = {**DEFAULT_RUSHBET, **get_config("rushbet_config", {})}
     ok, msg = TaskManager.get().start("rushbet", rush_bet_run, cfg)
     return {"ok": ok, "message": msg}
 
@@ -180,9 +271,28 @@ def stop_rushbet():
     return {"ok": ok, "message": msg}
 
 
+@router.post("/pickbet/start")
+def start_pickbet():
+    ok, msg = _check_license()
+    if not ok:
+        return {"ok": False, "message": msg}
+    cfg = {**DEFAULT_PICKBET, **get_config("pickbet_config", {})}
+    ok, msg = TaskManager.get().start("pickbet", pick_bet_run, cfg)
+    return {"ok": ok, "message": msg}
+
+
+@router.post("/pickbet/stop")
+def stop_pickbet():
+    ok, msg = TaskManager.get().stop("pickbet")
+    return {"ok": ok, "message": msg}
+
+
 @router.post("/followbet/start")
 def start_followbet():
-    cfg = get_config("followbet_config", DEFAULT_FOLLOWBET)
+    ok, msg = _check_license()
+    if not ok:
+        return {"ok": False, "message": msg}
+    cfg = _normalize_followbet({**DEFAULT_FOLLOWBET, **get_config("followbet_config", {})})
     ok, msg = TaskManager.get().start("followbet", follow_bet_run, cfg)
     return {"ok": ok, "message": msg}
 

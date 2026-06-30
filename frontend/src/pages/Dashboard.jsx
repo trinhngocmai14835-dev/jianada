@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { Card, Row, Col, Tag, Button, Space, Typography, Statistic, Alert } from 'antd'
-import { PlayCircleOutlined, PauseCircleOutlined, ThunderboltOutlined, FireOutlined, TeamOutlined } from '@ant-design/icons'
+import { PlayCircleOutlined, PauseCircleOutlined, ThunderboltOutlined, FireOutlined, AimOutlined, TeamOutlined } from '@ant-design/icons'
 import { api } from '../api/client'
 
 const { Title, Text } = Typography
@@ -12,7 +12,7 @@ const STATUS_TAG = {
 }
 
 export default function Dashboard({ licenseInfo }) {
-  const [status, setStatus] = useState({ autobet: 'stopped', rushbet: 'stopped', followbet: 'stopped' })
+  const [status, setStatus] = useState({ autobet: 'stopped', rushbet: 'stopped', pickbet: 'stopped', followbet: 'stopped' })
   const [loading, setLoading] = useState({})
 
   const refresh = async () => {
@@ -34,6 +34,8 @@ export default function Dashboard({ licenseInfo }) {
         'autobet-stop': api.stopAutoBet,
         'rushbet-start': api.startRushBet,
         'rushbet-stop': api.stopRushBet,
+        'pickbet-start': api.startPickBet,
+        'pickbet-stop': api.stopPickBet,
         'followbet-start': api.startFollowBet,
         'followbet-stop': api.stopFollowBet,
       }[action]
@@ -132,6 +134,45 @@ export default function Dashboard({ licenseInfo }) {
                   disabled={status.rushbet === 'stopped'}
                   loading={loading['rushbet-stop']}
                   onClick={() => ctrl('rushbet-stop', 'rushbet-stop')}
+                >
+                  停止
+                </Button>
+              </Space>
+            </Space>
+          </Card>
+        </Col>
+
+        {/* 自选号赢冲输缩模块 */}
+        <Col xs={24} md={12}>
+          <Card
+            title={<Space><AimOutlined style={{ color: '#fa541c' }} /><span>自选号赢冲输缩（3路自选号）</span></Space>}
+            extra={STATUS_TAG[status.pickbet] || STATUS_TAG.stopped}
+            style={{ borderRadius: 12, marginBottom: 24 }}
+          >
+            <Space direction="vertical" style={{ width: '100%' }} size={16}>
+              <Text type="secondary">三路各自勾选号码（勾几个用几个），命中升二阶赢冲，未中降回一阶，号码固定每期投</Text>
+              <Row gutter={16}>
+                <Col span={12}>
+                  <Statistic title="状态" value={status.pickbet === 'running' ? '运行中' : '已停止'} />
+                </Col>
+              </Row>
+              <Space>
+                <Button
+                  type="primary"
+                  icon={<PlayCircleOutlined />}
+                  disabled={status.pickbet === 'running'}
+                  loading={loading['pickbet']}
+                  onClick={() => ctrl('pickbet-start', 'pickbet')}
+                  style={{ background: '#fa541c', borderColor: '#fa541c' }}
+                >
+                  启动
+                </Button>
+                <Button
+                  danger
+                  icon={<PauseCircleOutlined />}
+                  disabled={status.pickbet === 'stopped'}
+                  loading={loading['pickbet-stop']}
+                  onClick={() => ctrl('pickbet-stop', 'pickbet-stop')}
                 >
                   停止
                 </Button>

@@ -44,19 +44,45 @@ def _free_port(port, log=None):
     except Exception:
         pass
 
+_ocr_instance = None
+_ocr_lock = threading.Lock()
+
+
+def _get_ocr():
+    """惰性创建并缓存单个 DdddOcr 实例（onnxruntime 推理线程安全，多账号可共用）。
+    避免每次识别都重载 ONNX 模型。返回 None 表示 ddddocr 不可用。"""
+    global _ocr_instance
+    if _ocr_instance is None:
+        with _ocr_lock:
+            if _ocr_instance is None:
+                import ddddocr  # 未安装会抛 ImportError，由调用方兜底
+                _ocr_instance = ddddocr.DdddOcr(show_ad=False)
+    return _ocr_instance
+
+
 def _solve_captcha(image_bytes: bytes) -> str:
+    # 捕获所有异常（不只 ImportError）：坏图/解码失败时不应搞挂整个登录
     try:
-        import ddddocr
-        return ddddocr.DdddOcr(show_ad=False).classification(image_bytes)
-    except ImportError:
+        return _get_ocr().classification(image_bytes)
+    except Exception:
         pass
     try:
         import muggle_ocr
         sdk = muggle_ocr.SDK(model_type=muggle_ocr.ModelType.Captcha)
         return sdk.predict(image_bytes)
-    except ImportError:
+    except Exception:
         pass
     return ""
+
+
+def _sleep_interruptible(seconds: float, stop_event) -> None:
+    """分段睡眠，期间轮询 stop_event，使「停止」能在 ~1 秒内生效。"""
+    end = time.time() + seconds
+    while True:
+        remain = end - time.time()
+        if remain <= 0 or stop_event.is_set():
+            return
+        time.sleep(min(1.0, remain))
 
 
 def _is_cf(page) -> bool:
@@ -303,6 +329,12 @@ def _betting_loop(page, account: str, cfg: dict, stop_event: threading.Event, lo
     ODDS = cfg.get("odds", 9.92)
     REBATE = cfg.get("rebate_rate", 0.0073)
 
+    # ===== 封盘/开奖时间参数（可被前端配置覆盖）=====
+    WIN_MIN = int(cfg.get("bet_window_min", 60))      # 距封盘倒计时落在 [min,max] 才下注
+    WIN_MAX = int(cfg.get("bet_window_max", 120))
+    CLOSE_BUFFER = int(cfg.get("close_buffer", 10))   # 延时后仍需 >该秒数才下注
+    DRAW_DELAY = int(cfg.get("draw_delay", 73))       # 封盘到开奖间隔（实测加拿大2.0=73s）
+
     start_balance = _get_balance(page) or 0
     last_draw = None
     bet_placed = False        # 控制本局是否可以下注
@@ -372,7 +404,16 @@ def _betting_loop(page, account: str, cfg: dict, stop_event: threading.Event, lo
             time.sleep(2)
             continue
 
-        if 60 <= cd <= 120 and not bet_placed:
+        # ⚠️ 必须等上一期开奖结算完才下注，避免开奖未确认就投/覆盖待结算注单
+        if pending_settlement:
+            now = time.time()
+            if now - last_heartbeat >= 30:
+                log(f"[{account}] ⏳ 等待上期开奖结算后再下注 | 倒计时{cd}s")
+                last_heartbeat = now
+            time.sleep(2)
+            continue
+
+        if WIN_MIN <= cd <= WIN_MAX and not bet_placed:
             for i in range(3):
                 targets[i] = sorted(random.sample(range(10), N))
             amounts = [BASE_BET, BASE_BET, BASE_BET]
@@ -389,14 +430,14 @@ def _betting_loop(page, account: str, cfg: dict, stop_event: threading.Event, lo
             if stop_event.is_set():
                 break
 
-            if _get_countdown(page) > 10:
+            if _get_countdown(page) > CLOSE_BUFFER:
                 ok = _place_bet(page, targets, amounts, log, account)
                 if ok:
                     bet_placed = True
                     pending_settlement = True   # 标记本局有待结算注单
                     remain = _get_countdown(page)
-                    log(f"[{account}] ✅ 下注成功，等待开奖 ({remain+10}s)...")
-                    time.sleep(remain + 10)
+                    log(f"[{account}] ✅ 下注成功，等待开奖 ({remain+DRAW_DELAY}s)...")
+                    _sleep_interruptible(remain + DRAW_DELAY, stop_event)
                     # 睡眠结束，新一局可以下注；结算由 pending_settlement 驱动，不依赖 bet_placed
                     bet_placed = False
                     log(f"[{account}] 🔄 新一局开始，准备下注...")

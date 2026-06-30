@@ -1,4 +1,4 @@
-@echo off
+﻿@echo off
 chcp 65001 > nul
 echo ============================================
 echo   自动下单系统 Pro — 一键打包
@@ -8,7 +8,7 @@ echo.
 echo [1/5] 安装 Python 依赖...
 cd /d "%~dp0backend"
 pip install -r requirements.txt -q
-if errorlevel 1 (echo 安装依赖失败 & pause & exit /b 1)
+if errorlevel 1 (echo 安装依赖失败 & exit /b 1)
 
 echo [2/5] 安装 Playwright 浏览器...
 playwright install chromium
@@ -17,9 +17,9 @@ if errorlevel 1 echo 警告: Playwright 浏览器安装失败，可继续打包
 echo [3/5] 构建前端...
 cd /d "%~dp0frontend"
 call npm install --silent
-if errorlevel 1 (echo npm install 失败 & pause & exit /b 1)
+if errorlevel 1 (echo npm install 失败 & exit /b 1)
 call npm run build
-if errorlevel 1 (echo 前端构建失败 & pause & exit /b 1)
+if errorlevel 1 (echo 前端构建失败 & exit /b 1)
 echo 前端构建完成 (输出到 backend/static/)
 
 echo [4/5] PyArmor 加密源代码...
@@ -70,17 +70,33 @@ pyinstaller ^
   --hidden-import "fastapi.staticfiles" ^
   --hidden-import "starlette.staticfiles" ^
   --hidden-import "aiofiles" ^
-  --hidden-import "playwright" ^
-  --hidden-import "playwright._impl._driver" ^
+  --collect-all "playwright" ^
   --hidden-import "ddddocr" ^
-  --hidden-import "cryptography" ^
+  --hidden-import "tkinter" ^
+  --hidden-import "tkinter.ttk" ^
+  --hidden-import "tkinter.messagebox" ^
+  --exclude-module "matplotlib" ^
+  --collect-all "cryptography" ^
+  --hidden-import "sqlite3" ^
+  --hidden-import "_sqlite3" ^
+  --hidden-import "api" ^
+  --hidden-import "api.routes" ^
+  --hidden-import "api.ws" ^
+  --hidden-import "core" ^
+  --hidden-import "core.db" ^
+  --hidden-import "core.license" ^
+  --hidden-import "core.task_manager" ^
+  --hidden-import "services" ^
+  --hidden-import "services.auto_bet_svc" ^
+  --hidden-import "services.follow_bet_svc" ^
+  --hidden-import "services.rush_bet_svc" ^
+  --hidden-import "services.pick_bet_svc" ^
   --paths "%~dp0backend\obf_build" ^
   "%MAIN_PY%"
-if errorlevel 1 (echo 打包失败 & pause & exit /b 1)
+if errorlevel 1 (echo 打包失败 & exit /b 1)
 
 echo.
 echo ============================================
 echo   打包完成！
 echo   输出文件: backend\dist\自动下单系统Pro.exe
 echo ============================================
-pause

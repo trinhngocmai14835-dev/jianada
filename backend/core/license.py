@@ -2,7 +2,7 @@ import hashlib
 import uuid
 import platform
 import base64
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # ── 公钥（验证用，打包进EXE；私钥只留在管理员 tools/ 目录）──────────
 _PUBLIC_KEY_PEM = b"""-----BEGIN PUBLIC KEY-----
@@ -51,11 +51,14 @@ def validate_license(key: str):
         # 验证签名（签名不对会抛异常）
         pub_key.verify(sig, data, padding.PKCS1v15(), hashes.SHA256())
 
-        expiry_date = datetime.strptime(expiry_str, "%Y%m%d")
-        if expiry_date < datetime.now():
+        # 到期日当天 23:59:59 仍有效，次日 00:00:00 才失效
+        expiry_date = datetime.strptime(expiry_str, "%Y%m%d") + timedelta(days=1)
+        if expiry_date <= datetime.now():
             return False, f"授权码已于 {expiry_str} 过期", expiry_str
 
         remaining = (expiry_date - datetime.now()).days
+        if remaining == 0:
+            return True, f"授权有效，今天到期（{expiry_str}）", expiry_str
         return True, f"授权有效，剩余 {remaining} 天（到期 {expiry_str}）", expiry_str
 
     except Exception as e:

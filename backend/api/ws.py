@@ -9,7 +9,7 @@ router = APIRouter()
 _subscribers: dict[str, set] = {}
 
 # 每个 task 保留最近 1000 条，每条带全局单调 seq
-_TASK_IDS = ["autobet", "rushbet", "followbet"]
+_TASK_IDS = ["autobet", "rushbet", "pickbet", "followbet"]
 
 _history: dict[str, deque] = {tid: deque(maxlen=1000) for tid in _TASK_IDS}
 _seq: dict[str, int] = {tid: 0 for tid in _TASK_IDS}

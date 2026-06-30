@@ -5,6 +5,7 @@ import {
   DashboardOutlined,
   ThunderboltOutlined,
   FireOutlined,
+  AimOutlined,
   TeamOutlined,
   KeyOutlined,
   SafetyOutlined,
@@ -14,6 +15,7 @@ import LicensePage from './pages/LicensePage'
 import Dashboard from './pages/Dashboard'
 import AutoBetPage from './pages/AutoBetPage'
 import RushBetPage from './pages/RushBetPage'
+import PickBetPage from './pages/PickBetPage'
 import FollowBetPage from './pages/FollowBetPage'
 
 const { Sider, Content, Header } = Layout
@@ -23,6 +25,7 @@ const NAV_ITEMS = [
   { key: '/', icon: <DashboardOutlined />, label: '控制台' },
   { key: '/autobet', icon: <ThunderboltOutlined />, label: '自动下注' },
   { key: '/rushbet', icon: <FireOutlined />, label: '赢冲输缩' },
+  { key: '/pickbet', icon: <AimOutlined />, label: '自选号赢冲' },
   { key: '/followbet', icon: <TeamOutlined />, label: '多账号跟投' },
   { key: '/license', icon: <KeyOutlined />, label: '授权管理' },
 ]
@@ -63,6 +66,7 @@ function AppLayout({ licenseInfo, onReload }) {
             <Route path="/" element={<Dashboard licenseInfo={licenseInfo} />} />
             <Route path="/autobet" element={<AutoBetPage />} />
             <Route path="/rushbet" element={<RushBetPage />} />
+            <Route path="/pickbet" element={<PickBetPage />} />
             <Route path="/followbet" element={<FollowBetPage />} />
             <Route path="/license" element={
               <div style={{ padding: 24 }}>

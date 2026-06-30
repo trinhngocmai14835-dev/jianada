@@ -139,7 +139,7 @@ def build_ui():
         try:
             key = generate_license(mid, days)
             result_var.set(key)
-            expiry = (datetime.now() + timedelta(days=days)).strftime("%Y%m%d")
+            expiry = key.split(".")[0]  # 直接从授权码中提取，与签名内容完全一致
             info_var.set(f"机器码 {mid}  ·  有效 {days} 天  ·  到期 {expiry}")
         except Exception as e:
             messagebox.showerror("生成失败", str(e))

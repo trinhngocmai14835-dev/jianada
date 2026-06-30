@@ -6,11 +6,18 @@ import os
 from datetime import datetime
 from playwright.sync_api import sync_playwright
 
-# ================= 策略配置：3路4球随机 · 每期必投 · 赢冲输缩 =================
-BASE_BET_AMOUNT = 500      # 一阶底注
-RUSH_BET_AMOUNT = 700      # 二阶赢冲注码
+# ================= 策略配置：3路4球随机 · 每期必投 · 条件赢冲输缩 =================
 NUMBERS_PER_POS = 4        # 每位置随机选4个号码
 NUM_POSITIONS = 3          # 3个独立位置（第一球、第二球、第三球）
+
+# ----- 条件赢冲输缩 档位表 -----
+# 每档 = (一阶底注, 二阶赢冲)；二阶 ≈ 一阶 × 1.4
+TIERS = [(50, 70), (70, 98), (100, 140)]
+# 升档阈值：会话累计亏损绝对值（从启动余额算起，含之前已输金额，故为绝对累计）
+#   档1 累计亏损 > 2000 → 档2；档2 累计亏损 > 3000 → 档3
+LOSS_THRESHOLDS = [2000, 3000]
+# 升档前休眠期数（这几期不下注，等待后再用新档位开打）
+SLEEP_PERIODS = 3
 
 # 风控配置（只保留止盈止损）
 RUN_START_HOUR = 9         # 早上9点开机
@@ -239,9 +246,26 @@ def random_pick(num_count):
     热号命中率仅比随机高0.6%，但波动极大，不如随机稳定。"""
     return sorted(random.sample(range(10), num_count))
 
-def run_betting(page, label="", base_amount=BASE_BET_AMOUNT, rush_amount=RUSH_BET_AMOUNT):
+def next_tier(tier, profit):
+    """根据当前档位与会话累计利润，决定下一步档位动作（纯函数，便于测试）。
+
+    返回 (new_tier, action)，action 取值：
+      'reset'   — 已回正(利润>=0)，归位档1
+      'upgrade' — 累计亏损突破当前档阈值，升一档
+      'hold'    — 维持当前档位
+    """
+    if profit >= 0 and tier > 0:
+        return 0, "reset"
+    loss = -profit
+    if tier < len(TIERS) - 1 and loss > LOSS_THRESHOLDS[tier]:
+        return tier + 1, "upgrade"
+    return tier, "hold"
+
+
+def run_betting(page, label="", mode="conditional", fixed_base=500, fixed_rush=700):
     tag = f"[{label}] " if label else ""
     page.on("dialog", lambda dialog: dialog.accept())
+    conditional = (mode == "conditional")  # conditional=条件档位 / simple=固定注码(原版)
 
     start_balance = get_current_balance(page)
     if start_balance is None: start_balance = 0
@@ -250,9 +274,20 @@ def run_betting(page, label="", base_amount=BASE_BET_AMOUNT, rush_amount=RUSH_BE
 
     print(f"{tag}💰 初始本金: {start_balance}")
     print(f"{tag}🕵️ 运行规则: {RUN_START_HOUR}:00-{RUN_END_HOUR}:00 | 止损 -{DAILY_STOP_LOSS} | 止盈 +{ABSOLUTE_TAKE_PROFIT}")
-    print(f"{tag}🎯 策略: 3路4球随机 · 每期必投 · 一阶{base_amount}元 · 赢冲二阶{rush_amount}元 · 输缩回一阶")
+    if conditional:
+        tier_desc = " → ".join(f"档{i+1}({b}/{r})" for i, (b, r) in enumerate(TIERS))
+        print(f"{tag}🎯 策略: 3路4球随机 · 每期必投 · 条件赢冲输缩")
+        print(f"{tag}   档位: {tier_desc} | 升档阈值(累计亏损){LOSS_THRESHOLDS} 休眠{SLEEP_PERIODS}期 | 回正归档1")
+    else:
+        print(f"{tag}🎯 策略: 3路4球随机 · 每期必投 · 固定赢冲输缩 · 一阶{fixed_base}/二阶{fixed_rush}")
 
-    # ===== 状态：只需记录各位置当前阶段和上期投注号码 =====
+    # ===== 状态：档位 + 各位置阶段 + 上期投注号码 =====
+    tier = 0                              # 当前档位下标，对应 TIERS（仅条件模式用）
+    sleep_remaining = 0                   # 升档后剩余休眠期数（仅条件模式用）
+    if conditional:
+        base_amount, rush_amount = TIERS[tier]  # 当前档位的 一阶/二阶 注码
+    else:
+        base_amount, rush_amount = fixed_base, fixed_rush  # 固定注码
     pos_steps = [1, 1, 1]              # 1=底注阶, 2=赢冲阶
     current_targets = [None, None, None]  # 上期投注号码（结算用）
     last_recorded_draw = None
@@ -312,6 +347,23 @@ def run_betting(page, label="", base_amount=BASE_BET_AMOUNT, rush_amount=RUSH_BE
                         else:
                             print(f"{tag}💀 [位置{i+1}] 未中，保持一阶底注 ({base_amount})")
 
+            # ===== 条件档位管理（每期评估一次，仅条件模式）=====
+            if conditional:
+                new_tier, action = next_tier(tier, profit)
+                if action == "reset":
+                    tier = new_tier
+                    base_amount, rush_amount = TIERS[tier]
+                    pos_steps = [1, 1, 1]
+                    sleep_remaining = 0
+                    print(f"{tag}↩️ 已回正(利润{profit:+.0f})，档位重置 → 档1 一阶{base_amount}/二阶{rush_amount}")
+                elif action == "upgrade":
+                    crossed = LOSS_THRESHOLDS[tier]
+                    tier = new_tier
+                    base_amount, rush_amount = TIERS[tier]
+                    pos_steps = [1, 1, 1]
+                    sleep_remaining = SLEEP_PERIODS
+                    print(f"{tag}⬆️ 累计亏损{-profit:.0f}>{crossed}，升至 档{tier+1} 一阶{base_amount}/二阶{rush_amount}，先休眠{SLEEP_PERIODS}期")
+
             last_recorded_draw = last_draw
 
         # ---------------- 开枪时机：每期必投 ----------------
@@ -321,12 +373,23 @@ def run_betting(page, label="", base_amount=BASE_BET_AMOUNT, rush_amount=RUSH_BE
             continue
 
         if 60 <= countdown <= 120 and not bet_placed_this_period:
+            if sleep_remaining > 0:
+                # 升档休眠：本期不下注，消耗一期后继续
+                sleep_remaining -= 1
+                print(f"{tag}😴 升档休眠中，本期跳过下注（剩余{sleep_remaining}期）| 档{tier+1} {base_amount}/{rush_amount}")
+                bet_placed_this_period = True
+                remain = get_countdown(page)
+                time.sleep((remain if remain > 0 else 30) + 10)
+                bet_placed_this_period = False
+                continue
+
             # 每期重新随机选号
             bet_targets = [random_pick(NUMBERS_PER_POS) for _ in range(NUM_POSITIONS)]
             bet_amounts = [rush_amount if pos_steps[i] == 2 else base_amount for i in range(NUM_POSITIONS)]
 
             step_info = " | ".join(f"位置{i+1}:{'二阶' if pos_steps[i]==2 else '一阶'}({bet_amounts[i]})" for i in range(NUM_POSITIONS))
-            print(f"{tag}🎲 本期选号: {bet_targets}")
+            prefix = f"档{tier+1} " if conditional else ""
+            print(f"{tag}🎲 {prefix}本期选号: {bet_targets}")
             print(f"{tag}⚡ {step_info}")
 
             random_delay = random.uniform(2.0, 6.0)
@@ -358,15 +421,28 @@ def input_amount(prompt, default):
     except:
         return default
 
+
 def main():
     port = sys.argv[1] if len(sys.argv) > 1 else '9222'
 
     print("=" * 50)
     print("  3路4球随机 · 赢冲输缩 自动下注系统")
     print("=" * 50)
-    base_amount = input_amount("请输入一阶底注金额", BASE_BET_AMOUNT)
-    rush_amount = input_amount("请输入二阶赢冲金额", RUSH_BET_AMOUNT)
-    print(f"✅ 注码设定：一阶 {base_amount} 元 / 二阶 {rush_amount} 元")
+    print("请选择策略模式：")
+    print("  1) 条件赢冲输缩（档位升级版）")
+    print("  2) 固定赢冲输缩（原版，固定注码）")
+    choice = input("输入 1 或 2 [默认1]: ").strip()
+    mode = "simple" if choice == "2" else "conditional"
+
+    fixed_base, fixed_rush = 500, 700
+    if mode == "conditional":
+        tier_desc = " → ".join(f"档{i+1}(一阶{b}/二阶{r})" for i, (b, r) in enumerate(TIERS))
+        print(f"📐 档位方案: {tier_desc}")
+        print(f"📈 升档阈值(累计亏损): {LOSS_THRESHOLDS} | 休眠{SLEEP_PERIODS}期 | 回正归档1")
+    else:
+        fixed_base = input_amount("请输入一阶底注金额", fixed_base)
+        fixed_rush = input_amount("请输入二阶赢冲金额", fixed_rush)
+        print(f"✅ 固定注码：一阶 {fixed_base} 元 / 二阶 {fixed_rush} 元")
     print("=" * 50)
 
     with sync_playwright() as p:
@@ -379,7 +455,7 @@ def main():
             print("❌ 连接失败！请检查端口。")
             sys.exit(1)
 
-        run_betting(page, base_amount=base_amount, rush_amount=rush_amount)
+        run_betting(page, mode=mode, fixed_base=fixed_base, fixed_rush=fixed_rush)
 
 if __name__ == "__main__":
     main()
