@@ -15,7 +15,7 @@ import urllib.parse
 from datetime import datetime, date
 from playwright.sync_api import sync_playwright
 
-from services.auto_bet_svc import _sleep_interruptible
+from services.auto_bet_svc import _sleep_interruptible, _login
 
 POS_PREFIX = {"b1": "odds_B1QH", "b2": "odds_B2QH", "b3": "odds_B3QH"}
 
@@ -508,6 +508,21 @@ class _Tracker:
 
 # ─── 服务入口 ─────────────────────────────────────────────────
 
+def _cdp_login(browser, account, password, entry_url, safe_code, log, line_kw="会员线路"):
+    """在 CDP 连接的浏览器上自动登录（复用自动下单的 _login）。
+    line_kw：采集/代理账号用"代理线路"(管理员登录)，跟投会员账号用"会员线路"(用户登录)。
+    只有填了账号密码才登录；成功返回登录后的 page，失败返回 None（可手动登录兜底）。"""
+    if not (account and password):
+        return None
+    try:
+        ctx = browser.contexts[0] if browser.contexts else browser.new_context()
+        pg = ctx.pages[0] if ctx.pages else ctx.new_page()
+        return _login(pg, ctx, account, password, entry_url, safe_code, log, line_kw)
+    except Exception as e:
+        log(f"[{account}] 自动登录失败（可手动登录兜底）: {e}")
+        return None
+
+
 def run(config: dict, stop_event: threading.Event, log_queue: queue.Queue):
     def log(msg: str):
         log_queue.put({"time": datetime.now().strftime("%H:%M:%S"), "msg": msg})
@@ -520,6 +535,9 @@ def run(config: dict, stop_event: threading.Event, log_queue: queue.Queue):
     ODDS = config.get("odds", 9.92)
     REBATE = config.get("rebate", 0.0073)
     entry_url = config.get("entry_url", "")
+    safe_code = config.get("safe_code", "")
+    source_account = config.get("source_account", "")
+    source_password = config.get("source_password", "")
 
     follower_str = ', '.join(f"{f.get('port')}({f.get('multiplier', 1)}倍)" for f in followers_cfg)
     log(f"跟投服务启动 | 采集端口:{source_port} | 跟投:{follower_str} | 模式:镜像全跟·按客户金额倍数")
@@ -549,8 +567,65 @@ def run(config: dict, stop_event: threading.Event, log_queue: queue.Queue):
             log("⏹️ 已取消等待")
             return
 
-        # ── 步骤2：等待报表页出现 ───────────────────────────────
-        log(f"⏳ 请在Chrome中登录，然后点击【即时注单】或【报表查询 → 注单明细】（等待中...）")
+        # 采集账号自动登录（采集账号=代理/管理员，走"代理线路→管理员登录"）
+        if source_account and source_password:
+            log(f"[A] 采集账号 {source_account} 自动登录中（代理线路·管理员登录）...")
+            if _cdp_login(browser_a, source_account, source_password, entry_url, safe_code, log, line_kw="代理线路"):
+                log(f"[A] 采集账号已登录，请手动点到【报表查询 → 注单明细】页")
+
+        # ── 步骤2：点开始后立即开好并登录所有跟投账号（不等采集注单明细）──
+        followers = []
+        for f_cfg in followers_cfg:
+            port_b = str(f_cfg.get("port", "9223"))
+            try:
+                mult = float(f_cfg.get("multiplier", 1))
+            except (TypeError, ValueError):
+                mult = 1.0
+            if mult <= 0:
+                mult = 1.0
+            f_acc = f_cfg.get("account", "")
+            f_pwd = f_cfg.get("password", "")
+
+            # 自动开浏览器：该端口连不上就启动一个（点开始后全自动，无需手动打开）
+            try:
+                bb = p.chromium.connect_over_cdp(f"http://127.0.0.1:{port_b}")
+            except Exception:
+                log(f"[B:{port_b}] 自动启动浏览器...")
+                _launch_source_browser(port_b, entry_url, log)
+                bb = None
+                for _ in range(20):
+                    if stop_event.is_set():
+                        break
+                    try:
+                        bb = p.chromium.connect_over_cdp(f"http://127.0.0.1:{port_b}")
+                        break
+                    except Exception:
+                        time.sleep(2)
+            if bb is None:
+                log(f"[B:{port_b}] ❌ 浏览器启动/连接失败，跳过")
+                continue
+
+            try:
+                _patch_stealth(bb)
+            except Exception:
+                pass
+
+            # 自动登录（填了账号密码才登录，否则用已登录的浏览器）
+            if f_acc and f_pwd:
+                log(f"[B:{port_b}] 自动登录 {f_acc}（会员线路·用户登录）...")
+                _cdp_login(bb, f_acc, f_pwd, entry_url, safe_code, log)
+
+            pg = _find_cd_page(bb) or _get_real_page(bb) or \
+                (bb.contexts[0].pages[0] if bb.contexts and bb.contexts[0].pages else None)
+            followers.append((port_b, mult, bb, pg))
+            log(f"[B:{port_b}] 已就绪 {mult}倍跟投")
+
+        if not followers:
+            log("❌ 无可用的跟投账号")
+            return
+
+        # ── 步骤3：等待采集账号的注单明细页（跟投都登录好后，你把采集点到该页）──
+        log(f"⏳ 跟投账号已就绪。请把采集账号页面点到【报表查询 → 注单明细】（可提前打开空的未结明细页，等待中...）")
         report_pages = []
         last_remind = 0
         while not stop_event.is_set():
@@ -577,28 +652,6 @@ def run(config: dict, stop_event: threading.Event, log_queue: queue.Queue):
         page_a = report_pages[0]
         _navigate_today(page_a, log)
         log(f"[A] 开始监控注单明细")
-
-        # 连接跟投账号
-        followers = []
-        for f_cfg in followers_cfg:
-            port_b = str(f_cfg.get("port", "9223"))
-            try:
-                mult = float(f_cfg.get("multiplier", 1))
-            except (TypeError, ValueError):
-                mult = 1.0
-            if mult <= 0:
-                mult = 1.0
-            try:
-                bb = p.chromium.connect_over_cdp(f"http://127.0.0.1:{port_b}")
-                pg = _get_real_page(bb) or bb.contexts[0].pages[0]
-                followers.append((port_b, mult, bb, pg))
-                log(f"[B:{port_b}] 已连接 {mult}倍跟投")
-            except Exception as e:
-                log(f"[B:{port_b}] ❌ 连接失败: {e}")
-
-        if not followers:
-            log("❌ 无可用的跟投账号")
-            return
 
         # 初始化分页
         try:

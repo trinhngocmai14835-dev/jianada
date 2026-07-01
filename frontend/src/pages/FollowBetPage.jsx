@@ -93,7 +93,7 @@ export default function FollowBetPage() {
 
       <Alert
         type="info"
-        message="使用前置条件：主账号（采集端口）需已登录并打开注单明细报表页（可提前打开空的「未结明细」页挂着，无需等客户下注）；跟投账号需已登录并停留在下注页面。客户一下注即自动贴身跟投。"
+        message="填好安全码 + 采集/各跟投账号的账号密码后，点「开始」即自动打开浏览器并登录：采集账号登录后请手动点到「报表查询→注单明细」页（可提前打开空的未结明细页挂着）；跟投账号自动登录到下注页。账号密码留空则走手动登录。客户一下注即自动按倍数贴身跟投。"
         style={{ marginBottom: 16 }}
         showIcon
       />
@@ -107,11 +107,28 @@ export default function FollowBetPage() {
                   <Form.Item label="入口网址（启动时自动打开，可留空）" name="entry_url">
                     <Input placeholder="https://166.tt（留空则打开空白页）" />
                   </Form.Item>
-                  <Form.Item label="采集端口（主账号）" name="source_port" rules={[{ required: true }]}>
-                    <Input placeholder="9222" />
+                  <Form.Item label="安全码（平台入口关键字，采集与所有跟投账号共用）" name="safe_code">
+                    <Input placeholder="平台入口安全码 / 关键字" />
                   </Form.Item>
-                  <Form.Item label="刷新间隔 (秒)" name="refresh_sec">
-                    <InputNumber style={{ width: '100%' }} min={1} />
+                  <Row gutter={8}>
+                    <Col span={8}>
+                      <Form.Item label="采集端口" name="source_port" rules={[{ required: true }]}>
+                        <Input placeholder="9222" />
+                      </Form.Item>
+                    </Col>
+                    <Col span={8}>
+                      <Form.Item label="采集账号" name="source_account" tooltip="填了则点开始自动登录采集账号；留空则你手动登录">
+                        <Input placeholder="选填·自动登录" autoComplete="off" />
+                      </Form.Item>
+                    </Col>
+                    <Col span={8}>
+                      <Form.Item label="采集密码" name="source_password">
+                        <Input.Password placeholder="选填" autoComplete="new-password" />
+                      </Form.Item>
+                    </Col>
+                  </Row>
+                  <Form.Item label="刷新间隔 (秒)" name="refresh_sec" tooltip="轮询客户注单的间隔，越小跟得越贴身（建议 2~3 秒）">
+                    <InputNumber style={{ width: '100%' }} min={1} max={30} />
                   </Form.Item>
                 </Panel>
 
@@ -158,6 +175,18 @@ export default function FollowBetPage() {
                                 </Form.Item>
                               </Col>
                             </Row>
+                            <Row gutter={8}>
+                              <Col span={12}>
+                                <Form.Item name={[name, 'account']} label="跟投账号" tooltip="填了则点开始自动打开浏览器并登录，无需手动开/登录">
+                                  <Input placeholder="选填·自动登录" autoComplete="off" />
+                                </Form.Item>
+                              </Col>
+                              <Col span={12}>
+                                <Form.Item name={[name, 'password']} label="密码">
+                                  <Input.Password placeholder="选填" autoComplete="new-password" />
+                                </Form.Item>
+                              </Col>
+                            </Row>
                           </Card>
                         ))}
                         <Button type="dashed" onClick={() => add({ port: '9223', multiplier: 1 })} block icon={<PlusOutlined />}>
@@ -188,11 +217,6 @@ export default function FollowBetPage() {
                     <Col span={12}>
                       <Form.Item label="退水比例" name="rebate">
                         <InputNumber style={{ width: '100%' }} step={0.0001} />
-                      </Form.Item>
-                    </Col>
-                    <Col span={12}>
-                      <Form.Item label="刷新间隔 (秒)" name="refresh_sec" tooltip="轮询客户注单明细的间隔，越小跟得越贴身（建议 2~3 秒，过小会频繁刷新报表页）">
-                        <InputNumber style={{ width: '100%' }} min={1} max={30} />
                       </Form.Item>
                     </Col>
                   </Row>

@@ -93,8 +93,12 @@ DEFAULT_PICKBET = {
 
 DEFAULT_FOLLOWBET = {
     "entry_url": "",
+    "safe_code": "",           # 平台入口安全码（关键字），采集+所有跟投账号共用
     "source_port": "9222",
-    "followers": [{"port": "9223", "multiplier": 1}],  # 倍数跟投：每注=客户金额×倍数
+    "source_account": "",      # 采集账号（填了则自动登录，否则手动登录）
+    "source_password": "",
+    # 倍数跟投：每注=客户金额×倍数；填了账号密码则点开始后自动开浏览器并登录
+    "followers": [{"port": "9223", "multiplier": 1, "account": "", "password": ""}],
     "odds": 9.92,
     "rebate": 0.0073,
     "bet_window_start": 120,

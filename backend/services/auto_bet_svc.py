@@ -110,7 +110,7 @@ def _get_chrome() -> str | None:
 
 # ─── 登录流程 ────────────────────────────────────────────────
 
-def _login(page, context, account: str, password: str, entry_url: str, safe_code: str, log):
+def _login(page, context, account: str, password: str, entry_url: str, safe_code: str, log, line_kw: str = "会员线路"):
     log(f"[{account}] 打开入口 {entry_url}...")
     page.goto(entry_url, wait_until="domcontentloaded", timeout=60000)
     time.sleep(2)
@@ -119,13 +119,13 @@ def _login(page, context, account: str, password: str, entry_url: str, safe_code
     page.wait_for_load_state("domcontentloaded", timeout=15000)
     time.sleep(2)
 
-    # 选择会员线路
+    # 选择线路（会员账号走"会员线路"，采集/代理账号走"代理线路"）
     page.wait_for_selector("table", timeout=30000)
     time.sleep(1)
-    links = page.locator('td:has-text("会员线路") + td a')
+    links = page.locator(f'td:has-text("{line_kw}") + td a')
     count = links.count()
     if count == 0:
-        raise Exception("找不到会员线路")
+        raise Exception(f"找不到{line_kw}")
 
     login_page = None
     for i in range(count):
@@ -145,7 +145,7 @@ def _login(page, context, account: str, password: str, entry_url: str, safe_code
             continue
 
     if not login_page:
-        raise Exception("所有会员线路均被CF拦截")
+        raise Exception(f"所有{line_kw}均被CF拦截")
 
     log(f"[{account}] 进入登录页: {login_page.url[:60]}")
     login_base = login_page.url.split("?")[0]
