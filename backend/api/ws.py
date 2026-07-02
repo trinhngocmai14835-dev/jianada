@@ -1,10 +1,31 @@
 import asyncio
 import json
+import re
 from collections import deque
+from datetime import date
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from core.task_manager import TaskManager
+from core.db import add_flow
 
 router = APIRouter()
+
+# 只把"有用流水"落盘：登录/下注/结算/止盈止损；其余啰嗦日志不入库
+_FLOW_MARKERS = ('登录完成', '本期选号', '下注成功', '跟客户', '开奖',
+                 '本期自算', '本期盈亏', '本期总盈亏', '止盈', '止损', '锁利')
+_ACC_RE = re.compile(r'\[([^\]]+)\]')
+
+
+def _persist_flow(task_id, m):
+    text = m.get("msg", "") or ""
+    if not any(k in text for k in _FLOW_MARKERS):
+        return
+    am = _ACC_RE.search(text)
+    account = am.group(1).strip() if am else ''
+    ts = f"{date.today().strftime('%Y-%m-%d')} {m.get('time', '')}".strip()
+    try:
+        add_flow(task_id, account, text, ts)
+    except Exception:
+        pass
 
 _subscribers: dict[str, set] = {}
 
@@ -34,6 +55,7 @@ async def _broadcast_loop():
                 _seq[task_id] += 1
                 m["seq"] = _seq[task_id]
                 _history[task_id].append(m)
+                _persist_flow(task_id, m)
             subs = _subscribers.get(task_id, set())
             dead = set()
             for ws in list(subs):

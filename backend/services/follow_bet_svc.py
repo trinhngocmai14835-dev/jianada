@@ -496,10 +496,12 @@ class _Tracker:
         self.pending: dict = {}
         self.settled: set = set()
 
-    def record(self, period, port, bets):
-        """bets: {pos: {num: amount}}，按号记录各自金额用于结算。"""
+    def record(self, period, port, bets, account=""):
+        """bets: {pos: {num: amount}}，按号记录各自金额用于结算。account 用于流水显示账号名。"""
         slot = self.pending.setdefault(period, {}).setdefault(
-            port, {"b1": {}, "b2": {}, "b3": {}})
+            port, {"b1": {}, "b2": {}, "b3": {}, "acct": account or port})
+        if account:
+            slot["acct"] = account
         for pos in ["b1", "b2", "b3"]:
             for n, amt in bets.get(pos, {}).items():
                 slot[pos][n] = amt
@@ -513,6 +515,7 @@ class _Tracker:
         period_profit = 0.0
         self.log(f"📒 结算期号: {period} | 开奖: {draw_nums}")
         for port, info in self.pending[period].items():
+            acct = info.get("acct") or port
             pp = 0.0
             for pos, label in [("b1", "一球"), ("b2", "二球"), ("b3", "三球")]:
                 num_amt = info.get(pos, {})
@@ -524,13 +527,13 @@ class _Tracker:
                 if d in num_amt:
                     win = num_amt[d] * self.odds
                     bp = win - total_bet + rebate_v
-                    self.log(f"  [{port}] {label}: ✅中{d} 赢{win:.2f}-投{total_bet}+退{rebate_v:.2f}={bp:+.2f}")
+                    self.log(f"  [{acct}] {label}: ✅中{d} 赢{win:.2f}-投{total_bet}+退{rebate_v:.2f}={bp:+.2f}")
                 else:
                     bp = -total_bet + rebate_v
-                    self.log(f"  [{port}] {label}: ❌未中{d} -{total_bet}+退{rebate_v:.2f}={bp:+.2f}")
+                    self.log(f"  [{acct}] {label}: ❌未中{d} -{total_bet}+退{rebate_v:.2f}={bp:+.2f}")
                 pp += bp
             period_profit += pp
-            self.log(f"  [{port}] 本期盈亏: {pp:+.2f}")
+            self.log(f"  [{acct}] 本期盈亏: {pp:+.2f}")
         self.total += period_profit
         self.log(f"📊 本期总盈亏: {period_profit:+.2f} | 累计: {self.total:+.2f} (共{self.periods}期)")
 
@@ -648,7 +651,7 @@ def run(config: dict, stop_event: threading.Event, log_queue: queue.Queue):
 
             pg = _find_cd_page(bb) or _get_real_page(bb) or \
                 (bb.contexts[0].pages[0] if bb.contexts and bb.contexts[0].pages else None)
-            followers.append((port_b, mult, bb, pg))
+            followers.append((port_b, mult, bb, pg, f_acc))
             log(f"[B:{port_b}] 已就绪 {mult}倍跟投")
 
         if not followers:
@@ -806,7 +809,8 @@ def run(config: dict, stop_event: threading.Event, log_queue: queue.Queue):
 
                 # 镜像全跟：每个跟投账号各自按倍数跟客户全部注单
                 # 按 (跟投端口, 下注编号, 球, 号) 独立去重 —— 客户每注每账号只跟一次，失败下次自动补
-                for f_port, f_mult, f_browser, f_page in followers:
+                for f_port, f_mult, f_browser, f_page, f_acc in followers:
+                    acc_tag = f_acc or f_port
                     pending = [b for b in bets
                                if (f_port, b["betId"], b["pos"], b["num"]) not in done_set]
                     if not pending:
@@ -822,13 +826,13 @@ def run(config: dict, stop_event: threading.Event, log_queue: queue.Queue):
                             done_set.add((f_port, b["betId"], b["pos"], b["num"]))
                         total_bets += len(pending)
                         bet_placed_this_period = True
-                        tracker.record(period, f_port, my_bets)
+                        tracker.record(period, f_port, my_bets, acc_tag)
                         amt_desc = ", ".join(
                             f"{pos}:{'/'.join(str(a) for a in na.values())}"
                             for pos, na in my_bets.items())
-                        log(f"    ✅ [{f_port}] {f_mult}倍 跟客户{len(pending)}注 [{amt_desc}] | 累计{total_bets}注")
+                        log(f"    ✅ [{acc_tag}] {f_mult}倍 跟客户{len(pending)}注 [{amt_desc}] | 累计{total_bets}注")
                     else:
-                        log(f"    ❌ [{f_port}] 失败，下次重试")
+                        log(f"    ❌ [{acc_tag}] 失败，下次重试")
                     time.sleep(1)
 
             time.sleep(REFRESH)

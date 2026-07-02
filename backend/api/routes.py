@@ -2,7 +2,8 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 from typing import Any
 
-from core.db import get_config, set_config, get_license, save_license
+from core.db import (get_config, set_config, get_license, save_license,
+                     get_flow, flow_accounts, clear_flow)
 from core.license import get_machine_id, validate_license
 from core.task_manager import TaskManager
 from services.auto_bet_svc import run as auto_bet_run
@@ -312,3 +313,21 @@ def open_follower_browser(req: OpenBrowserRequest):
     logs = []
     ok = _launch_source_browser(req.port, req.entry_url, lambda msg: logs.append(msg))
     return {"ok": ok, "message": logs[-1] if logs else ""}
+
+
+# ── 投注流水 ──────────────────────────────────────────────────
+
+@router.get("/flow")
+def api_get_flow(account: str = "", mode: str = "", limit: int = 800):
+    return {"records": get_flow(account or None, mode or None, limit)}
+
+
+@router.get("/flow/accounts")
+def api_flow_accounts():
+    return {"accounts": flow_accounts()}
+
+
+@router.post("/flow/clear")
+def api_flow_clear(data: dict):
+    clear_flow(account=(data.get("account") or None), days=(data.get("days") or None))
+    return {"ok": True}
