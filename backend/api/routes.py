@@ -20,8 +20,6 @@ DEFAULT_AUTOBET = {
     "accounts": [{"account": "", "password": "", "port": 9222}],
     "base_bet_amount": 188,
     "numbers_per_pos": 9,
-    "run_start_hour": 9,
-    "run_end_hour": 21,
     "daily_stop_loss": 70000,
     "take_profit": 40000,
     "locked_profit": 30000,
@@ -52,8 +50,6 @@ DEFAULT_RUSHBET = {
     ],
     "loss_thresholds": [2000, 3000],
     "sleep_periods": 3,
-    "run_start_hour": 9,
-    "run_end_hour": 21,
     "daily_stop_loss": 29000,
     "take_profit": 25000,
     "odds": 9.92,
@@ -78,8 +74,6 @@ DEFAULT_PICKBET = {
     ],
     "base_bet_amount": 500,   # 一阶底注
     "rush_bet_amount": 700,   # 二阶赢冲
-    "run_start_hour": 9,
-    "run_end_hour": 21,
     "daily_stop_loss": 29000,
     "take_profit": 25000,
     "odds": 9.92,
@@ -99,6 +93,8 @@ DEFAULT_FOLLOWBET = {
     "source_password": "",
     # 倍数跟投：每注=客户金额×倍数；填了账号密码则点开始后自动开浏览器并登录
     "followers": [{"port": "9223", "multiplier": 1, "account": "", "password": ""}],
+    # 目标客户未结明细：粘贴一次该客户的注单明细URL，工具每天自动用"今天+当前域名"重拼并打开
+    "follow_targets": [],   # [{"label": "ab1351", "url": "https://.../ReportNew/BettingDetail?..."}]
     "odds": 9.92,
     "rebate": 0.0073,
     "bet_window_start": 120,

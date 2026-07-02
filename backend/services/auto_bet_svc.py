@@ -320,8 +320,6 @@ def _place_bet(page, pos_numbers: list, amounts: list, log, label: str):
 def _betting_loop(page, account: str, cfg: dict, stop_event: threading.Event, log):
     BASE_BET = cfg.get("base_bet_amount", 188)
     N = cfg.get("numbers_per_pos", 9)
-    START_H = cfg.get("run_start_hour", 9)
-    END_H = cfg.get("run_end_hour", 21)
     STOP_LOSS = cfg.get("daily_stop_loss", 70000)
     TAKE_PROFIT = cfg.get("take_profit", 40000)
     LOCKED = cfg.get("locked_profit", 30000)
@@ -347,17 +345,6 @@ def _betting_loop(page, account: str, cfg: dict, stop_event: threading.Event, lo
     log(f"[{account}] 开始下注循环 | 起始余额: {start_balance}")
 
     while not stop_event.is_set():
-        h = datetime.now().hour
-        # 支持跨天窗口：START_H > END_H 时表示运行到次日 END_H
-        if START_H <= END_H:
-            in_window = START_H <= h < END_H
-        else:
-            in_window = h >= START_H or h < END_H
-        if not in_window:
-            log(f"[{account}] 宵禁时间 ({h}点，窗口 {START_H}-{END_H})，待机中...")
-            time.sleep(60)
-            continue
-
         bal = _get_balance(page)
         if bal is None:
             time.sleep(3)

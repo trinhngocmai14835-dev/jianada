@@ -338,6 +338,35 @@ def _fetch_bets(page_a: object) -> dict:
     return groups
 
 
+def _current_domain(browser):
+    """从已登录的浏览器里找出当前代理线路域名，如 https://11313740-luk.mm555.co。"""
+    try:
+        for ctx in browser.contexts:
+            for pg in ctx.pages:
+                m = re.match(r'(https?://[^/]+)', pg.url or '')
+                if m and 'luk.' in m.group(1):
+                    return m.group(1)
+    except Exception:
+        pass
+    return None
+
+
+def _rebuild_report_url(url, domain, today):
+    """把粘贴的未结明细URL换成【当前域名 + 今天日期】：域名每天变、日期每天变，
+    但 userid/orgId 等是固定的，所以只需替换这两处即可长期复用。"""
+    parsed = urllib.parse.urlparse(url)
+    params = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+    if "querydata" in params:
+        qd = json.loads(params["querydata"][0])
+        qd["startDate"] = today
+        qd["endDate"] = today
+        params["querydata"] = [json.dumps(qd, ensure_ascii=False, separators=(",", ":"))]
+    new_query = "&".join(
+        f"{k}={urllib.parse.quote(v[0], safe='')}" for k, v in params.items())
+    base = domain or (parsed.scheme + "://" + parsed.netloc)
+    return f"{base}{parsed.path}?{new_query}"
+
+
 def _navigate_today(page, log):
     """把报表页日期自动切换到今天，避免读到旧注单"""
     try:
@@ -538,6 +567,8 @@ def run(config: dict, stop_event: threading.Event, log_queue: queue.Queue):
     safe_code = config.get("safe_code", "")
     source_account = config.get("source_account", "")
     source_password = config.get("source_password", "")
+    follow_targets = [t for t in (config.get("follow_targets") or [])
+                      if isinstance(t, dict) and str(t.get("url", "")).strip()]
 
     follower_str = ', '.join(f"{f.get('port')}({f.get('multiplier', 1)}倍)" for f in followers_cfg)
     log(f"跟投服务启动 | 采集端口:{source_port} | 跟投:{follower_str} | 模式:镜像全跟·按客户金额倍数")
@@ -624,8 +655,28 @@ def run(config: dict, stop_event: threading.Event, log_queue: queue.Queue):
             log("❌ 无可用的跟投账号")
             return
 
-        # ── 步骤3：等待采集账号的注单明细页（跟投都登录好后，你把采集点到该页）──
-        log(f"⏳ 跟投账号已就绪。请把采集账号页面点到【报表查询 → 注单明细】（可提前打开空的未结明细页，等待中...）")
+        # 目标客户未结明细：用【当前域名+今天日期】重拼粘贴的URL并自动打开（免去手动找页面）
+        if follow_targets:
+            dom = _current_domain(browser_a)
+            today = date.today().strftime("%Y-%m-%d")
+            opened = 0
+            for t in follow_targets:
+                try:
+                    rebuilt = _rebuild_report_url(str(t["url"]).strip(), dom, today)
+                    tp = browser_a.contexts[0].new_page()
+                    tp.goto(rebuilt, wait_until="domcontentloaded", timeout=30000)
+                    opened += 1
+                    log(f"[A] 已自动打开目标客户未结明细页: {t.get('label') or ''}")
+                except Exception as e:
+                    log(f"[A] 打开目标未结明细失败({t.get('label') or ''}): {e}")
+            if opened:
+                time.sleep(2)
+
+        # ── 步骤3：等待采集账号的注单明细页 ──
+        if follow_targets:
+            log(f"⏳ 已按目标客户自动打开未结明细页，开始监控...")
+        else:
+            log(f"⏳ 跟投账号已就绪。请把采集账号页面点到【报表查询 → 注单明细】（可提前打开空的未结明细页，等待中...）")
         report_pages = []
         last_remind = 0
         while not stop_event.is_set():

@@ -254,16 +254,6 @@ export default function PickBetPage() {
 
                   <Row gutter={16}>
                     <Col span={12}>
-                      <Form.Item label="开始时间 (时)" name="run_start_hour">
-                        <InputNumber style={{ width: '100%' }} min={0} max={23} />
-                      </Form.Item>
-                    </Col>
-                    <Col span={12}>
-                      <Form.Item label="结束时间 (时)" name="run_end_hour">
-                        <InputNumber style={{ width: '100%' }} min={0} max={23} />
-                      </Form.Item>
-                    </Col>
-                    <Col span={12}>
                       <Form.Item label="止盈 (元)" name="take_profit">
                         <InputNumber style={{ width: '100%' }} min={0} />
                       </Form.Item>

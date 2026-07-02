@@ -102,7 +102,7 @@ export default function FollowBetPage() {
         <Col xs={24} lg={12}>
           <Card title="参数配置" style={{ borderRadius: 12, marginBottom: 24 }}>
             <Form form={form} layout="vertical">
-              <Collapse defaultActiveKey={['conn', 'followers', 'strategy']} ghost forceRender>
+              <Collapse defaultActiveKey={['conn', 'followers', 'targets', 'strategy']} ghost forceRender>
                 <Panel header="🔌 连接设置" key="conn">
                   <Form.Item label="入口网址（启动时自动打开，可留空）" name="entry_url">
                     <Input placeholder="https://166.tt（留空则打开空白页）" />
@@ -191,6 +191,35 @@ export default function FollowBetPage() {
                         ))}
                         <Button type="dashed" onClick={() => add({ port: '9223', multiplier: 1 })} block icon={<PlusOutlined />}>
                           添加跟投账号
+                        </Button>
+                      </>
+                    )}
+                  </Form.List>
+                </Panel>
+
+                <Panel header="🎯 目标客户（未结明细链接）" key="targets">
+                  <Alert
+                    type="info"
+                    showIcon
+                    style={{ marginBottom: 12 }}
+                    message="每个要跟的客户，粘贴一次他的『注单明细』页面网址（就是浏览器地址栏那条）。工具会自动用『今天日期+当前登录域名』重拼并打开，无需你每天手动找页面。userid 是固定的，贴一次长期有效。"
+                  />
+                  <Form.List name="follow_targets">
+                    {(fields, { add, remove }) => (
+                      <>
+                        {fields.map(({ key, name }) => (
+                          <Card size="small" key={key} style={{ marginBottom: 8, background: '#fafafa' }}
+                            extra={<MinusCircleOutlined onClick={() => remove(name)} style={{ color: 'red' }} />}>
+                            <Form.Item name={[name, 'label']} label="客户账号名（备注用）">
+                              <Input placeholder="如 ab1351" />
+                            </Form.Item>
+                            <Form.Item name={[name, 'url']} label="该客户未结明细网址" rules={[{ required: true }]}>
+                              <Input.TextArea rows={3} placeholder="粘贴 .../ReportNew/BettingDetail?querydata=... 完整网址" />
+                            </Form.Item>
+                          </Card>
+                        ))}
+                        <Button type="dashed" onClick={() => add({ label: '', url: '' })} block icon={<PlusOutlined />}>
+                          添加目标客户
                         </Button>
                       </>
                     )}

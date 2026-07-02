@@ -45,8 +45,6 @@ def _parse_pos_numbers(raw):
 
 
 def _betting_loop(page, account, cfg, stop_event, log):
-    START_H = cfg.get("run_start_hour", 9)
-    END_H = cfg.get("run_end_hour", 21)
     STOP_LOSS = cfg.get("daily_stop_loss", 29000)
     TAKE_PROFIT = cfg.get("take_profit", 25000)
     ODDS = cfg.get("odds", 9.92)
@@ -75,13 +73,6 @@ def _betting_loop(page, account, cfg, stop_event, log):
     log(f"[{account}] 自选号赢冲输缩启动 | 一阶{BASE_BET}/二阶{RUSH_BET} | {nums_desc} | 起始余额: {start_balance}")
 
     while not stop_event.is_set():
-        h = datetime.now().hour
-        in_window = (START_H <= h < END_H) if START_H <= END_H else (h >= START_H or h < END_H)
-        if not in_window:
-            log(f"[{account}] 宵禁时间 ({h}点，窗口{START_H}-{END_H})，待机中...")
-            time.sleep(60)
-            continue
-
         bal = _get_balance(page)
         if bal is None:
             time.sleep(3)
