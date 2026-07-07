@@ -367,6 +367,20 @@ def _rebuild_report_url(url, domain, today):
     return f"{base}{parsed.path}?{new_query}"
 
 
+def _merge_groups(all_groups: dict, g: dict):
+    """把一个报表页的解析结果 g={(账号,期号):[注单dict,...]} 合并进 all_groups。
+    多报表页可能有重叠，按下注编号(betId)去重。"""
+    for k, v in g.items():
+        if k not in all_groups:
+            all_groups[k] = list(v)
+        else:
+            seen = {b["betId"] for b in all_groups[k]}
+            for b in v:
+                if b["betId"] not in seen:
+                    all_groups[k].append(b)
+                    seen.add(b["betId"])
+
+
 def _navigate_today(page, log):
     """把报表页日期自动切换到今天，避免读到旧注单"""
     try:
@@ -784,14 +798,7 @@ def run(config: dict, stop_event: threading.Event, log_queue: queue.Queue):
             for rp in report_pages:
                 g = _refresh_page(rp)
                 if g:
-                    for k, v in g.items():
-                        if k not in all_groups:
-                            all_groups[k] = v
-                        else:
-                            for pos in ["b1", "b2", "b3"]:
-                                for n in v[pos]:
-                                    if n not in all_groups[k][pos]:
-                                        all_groups[k][pos].append(n)
+                    _merge_groups(all_groups, g)
 
             if not all_groups:
                 time.sleep(REFRESH)
