@@ -338,17 +338,34 @@ def _fetch_bets(page_a: object) -> dict:
     return groups
 
 
-def _current_domain(browser):
-    """从已登录的浏览器里找出当前代理线路域名，如 https://11313740-luk.mm555.co。"""
+def _current_domain(browser, prefer_page=None):
+    """找出采集账号当前登录的代理线路域名，如 https://11313740-luk.mm555.co。
+    优先用登录后所在页(prefer_page)的域名，其次已登录后台页(/Home/Index、/ReportNew)，
+    最后任意 luk 域名。取错域名会导致重拼的报表URL没有会话、抓不到数据。"""
+    def dom_of(url):
+        m = re.match(r'(https?://[^/]+)', url or '')
+        return m.group(1) if (m and 'luk.' in m.group(1)) else None
+
+    if prefer_page is not None:
+        try:
+            d = dom_of(prefer_page.url)
+            if d:
+                return d
+        except Exception:
+            pass
+    candidates = []
     try:
         for ctx in browser.contexts:
             for pg in ctx.pages:
-                m = re.match(r'(https?://[^/]+)', pg.url or '')
-                if m and 'luk.' in m.group(1):
-                    return m.group(1)
+                d = dom_of(pg.url)
+                if d:
+                    candidates.append((pg.url, d))
     except Exception:
         pass
-    return None
+    for url, d in candidates:   # 优先已登录后台页，避免选到登录页
+        if '/Home/Index' in url or '/ReportNew' in url:
+            return d
+    return candidates[0][1] if candidates else None
 
 
 def _rebuild_report_url(url, domain, today):
@@ -616,10 +633,12 @@ def run(config: dict, stop_event: threading.Event, log_queue: queue.Queue):
             return
 
         # 采集账号自动登录（采集账号=代理/管理员，走"代理线路→管理员登录"）
+        src_login_page = None
         if source_account and source_password:
             log(f"[A] 采集账号 {source_account} 自动登录中（代理线路·管理员登录）...")
-            if _cdp_login(browser_a, source_account, source_password, entry_url, safe_code, log, line_kw="代理线路"):
-                log(f"[A] 采集账号已登录，请手动点到【报表查询 → 注单明细】页")
+            src_login_page = _cdp_login(browser_a, source_account, source_password, entry_url, safe_code, log, line_kw="代理线路")
+            if src_login_page:
+                log(f"[A] 采集账号已登录")
 
         # ── 步骤2：点开始后立即开好并登录所有跟投账号（不等采集注单明细）──
         followers = []
@@ -672,10 +691,11 @@ def run(config: dict, stop_event: threading.Event, log_queue: queue.Queue):
             log("❌ 无可用的跟投账号")
             return
 
-        # 目标客户未结明细：用【当前域名+今天日期】重拼粘贴的URL并自动打开（免去手动找页面）
+        # 目标客户未结明细：用【当前登录域名+今天日期】重拼粘贴的URL并自动打开（免去手动找页面）
         if follow_targets:
-            dom = _current_domain(browser_a)
+            dom = _current_domain(browser_a, src_login_page)
             today = date.today().strftime("%Y-%m-%d")
+            log(f"[A] 目标客户URL重拼：域名 {dom or '(未取到, 用原URL域名)'} + 日期 {today}")
             opened = 0
             for t in follow_targets:
                 try:

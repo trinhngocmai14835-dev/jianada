@@ -64,7 +64,7 @@ class _FakeBrowser:
 
 
 def test_current_domain():
-    print("[2] _current_domain：识别代理线路域名")
+    print("[2] _current_domain：识别代理线路域名（优先登录页/后台页）")
     from services.follow_bet_svc import _current_domain
     b = _FakeBrowser([_FakeCtx([
         _FakePage("chrome://newtab/"),
@@ -74,6 +74,20 @@ def test_current_domain():
 
     b2 = _FakeBrowser([_FakeCtx([_FakePage("https://www.166dh2.com/Site/Show")])])
     check(_current_domain(b2) is None, "只有门户页(无luk)时返回 None")
+
+    # prefer_page 优先：登录后所在页的域名最可靠
+    prefer = _FakePage("https://11313740-luk.mm555.co/Home/Index")
+    b3 = _FakeBrowser([_FakeCtx([_FakePage("https://99999999-luk.cc555.co/Member/Login")])])
+    check(_current_domain(b3, prefer) == "https://11313740-luk.mm555.co",
+          "有 prefer_page 时优先用它的域名（而非残留登录页）")
+
+    # 无 prefer 时，优先已登录后台页(/Home/Index)而非登录页(/Member/Login)
+    b4 = _FakeBrowser([_FakeCtx([
+        _FakePage("https://88888888-luk.cc555.co/Member/Login"),
+        _FakePage("https://11313740-luk.mm555.co/Home/Index"),
+    ])])
+    check(_current_domain(b4) == "https://11313740-luk.mm555.co",
+          "优先 /Home/Index 后台页，跳过残留登录页")
 
 
 # ── 3. 流水落盘过滤 ─────────────────────────────────────────
