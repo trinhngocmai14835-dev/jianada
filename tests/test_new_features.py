@@ -48,6 +48,14 @@ def test_rebuild_report_url():
     out2 = _rebuild_report_url(url, None, "2026-07-02")
     check(out2.startswith("https://73642149-luk.cc555.co"), "domain=None 时回退原域名")
 
+    # 代理账号变了(df788→kan3772)：uid/loginId 用当前实时值覆盖
+    out3 = _rebuild_report_url(url, "https://11313740-luk.mm555.co", "2026-07-08",
+                               uid="7ae4359cNEW", login_id="kan3772")
+    p3 = urllib.parse.parse_qs(urllib.parse.urlparse(out3).query)
+    check(p3["uid"][0] == "7ae4359cNEW", "uid 换成当前代理实时值")
+    check(p3["loginId"][0] == "kan3772", "loginId 换成当前代理")
+    check(json.loads(p3["querydata"][0])["userid"] == "7a599ABC", "客户userid仍保留不变")
+
 
 # ── 2. 当前域名提取 ─────────────────────────────────────────
 class _FakePage:
@@ -172,12 +180,31 @@ def test_merge_groups():
     check(len(all_groups) == 2 and len(all_groups[("ab1352", "P1")]) == 1, "不同客户各自独立")
 
 
+def test_current_agent_ids():
+    print("[6] _current_agent_ids：从后台链接读当前代理 uid/loginId（代理账号可变）")
+    from services.follow_bet_svc import _current_agent_ids
+
+    class _P:
+        def __init__(self, res):
+            self._res = res
+        def evaluate(self, js):
+            return self._res
+
+    b = _FakeBrowser([_FakeCtx([_P(None), _P({"uid": "7ae4359c", "loginId": "kan3772"})])])
+    uid, lid = _current_agent_ids(b)
+    check(uid == "7ae4359c" and lid == "kan3772", f"取到 uid={uid} loginId={lid}")
+
+    b2 = _FakeBrowser([_FakeCtx([_P(None)])])
+    check(_current_agent_ids(b2) == (None, None), "无匹配链接时返回 (None,None)")
+
+
 def main():
     print("=" * 56)
     print("本轮新增功能 回归测试")
     print("=" * 56)
     for fn in [test_rebuild_report_url, test_current_domain,
-               test_persist_flow_filter, test_flow_db, test_merge_groups]:
+               test_persist_flow_filter, test_flow_db, test_merge_groups,
+               test_current_agent_ids]:
         fn()
     print("=" * 56)
     print("🎉 全部通过")

@@ -368,9 +368,38 @@ def _current_domain(browser, prefer_page=None):
     return candidates[0][1] if candidates else None
 
 
-def _rebuild_report_url(url, domain, today):
-    """把粘贴的未结明细URL换成【当前域名 + 今天日期】：域名每天变、日期每天变，
-    但 userid/orgId 等是固定的，所以只需替换这两处即可长期复用。"""
+def _current_agent_ids(browser):
+    """从已登录的代理后台页里读出当前会话的 uid 和 loginId（后台报表链接里都带）。
+    代理账号可能换（df788→kan3772…），uid/loginId 随之变，必须用实时值而非粘贴的旧值。"""
+    js = """() => {
+        var as = document.querySelectorAll('a[href]');
+        for (var i=0;i<as.length;i++){
+            var h = as[i].getAttribute('href')||'';
+            if (h.indexOf('uid=')>=0 && h.indexOf('loginId=')>=0){
+                var q = h.split('?')[1]||'', p={};
+                q.split('&').forEach(function(kv){var j=kv.indexOf('=');if(j>0)p[kv.slice(0,j)]=decodeURIComponent(kv.slice(j+1));});
+                if(p.uid && p.loginId) return {uid:p.uid, loginId:p.loginId};
+            }
+        }
+        return null;
+    }"""
+    try:
+        for ctx in browser.contexts:
+            for pg in ctx.pages:
+                try:
+                    res = pg.evaluate(js)
+                    if res and res.get("uid") and res.get("loginId"):
+                        return res["uid"], res["loginId"]
+                except Exception:
+                    continue
+    except Exception:
+        pass
+    return None, None
+
+
+def _rebuild_report_url(url, domain, today, uid=None, login_id=None):
+    """把粘贴的未结明细URL换成【当前域名 + 今天日期 + 当前代理uid/loginId】。
+    固定不变的只有 querydata 里的 userid/orgId(客户身份)；域名/日期/代理身份都实时替换。"""
     parsed = urllib.parse.urlparse(url)
     params = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
     if "querydata" in params:
@@ -378,6 +407,10 @@ def _rebuild_report_url(url, domain, today):
         qd["startDate"] = today
         qd["endDate"] = today
         params["querydata"] = [json.dumps(qd, ensure_ascii=False, separators=(",", ":"))]
+    if uid:
+        params["uid"] = [uid]
+    if login_id:
+        params["loginId"] = [login_id]
     new_query = "&".join(
         f"{k}={urllib.parse.quote(v[0], safe='')}" for k, v in params.items())
     base = domain or (parsed.scheme + "://" + parsed.netloc)
@@ -694,12 +727,13 @@ def run(config: dict, stop_event: threading.Event, log_queue: queue.Queue):
         # 目标客户未结明细：用【当前登录域名+今天日期】重拼粘贴的URL并自动打开（免去手动找页面）
         if follow_targets:
             dom = _current_domain(browser_a, src_login_page)
+            cur_uid, cur_login = _current_agent_ids(browser_a)
             today = date.today().strftime("%Y-%m-%d")
-            log(f"[A] 目标客户URL重拼：域名 {dom or '(未取到, 用原URL域名)'} + 日期 {today}")
+            log(f"[A] 目标客户URL重拼：域名 {dom or '(用原URL域名)'} | 代理 {cur_login or '(未取到,用原loginId)'} | 日期 {today}")
             opened = 0
             for t in follow_targets:
                 try:
-                    rebuilt = _rebuild_report_url(str(t["url"]).strip(), dom, today)
+                    rebuilt = _rebuild_report_url(str(t["url"]).strip(), dom, today, cur_uid, cur_login)
                     tp = browser_a.contexts[0].new_page()
                     tp.goto(rebuilt, wait_until="domcontentloaded", timeout=30000)
                     opened += 1
