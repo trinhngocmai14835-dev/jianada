@@ -14,7 +14,7 @@ from playwright.sync_api import sync_playwright
 
 from services.auto_bet_svc import (
     _get_chrome, _login,
-    _get_balance, _get_countdown, _get_last_draw, _place_bet,
+    _get_balance, _get_countdown, _get_last_draw_with_issue, _place_bet,
     _free_port, _sleep_interruptible,
 )
 
@@ -50,9 +50,9 @@ def _betting_loop(page, account, cfg, stop_event, log):
     ODDS = cfg.get("odds", 9.92)
     REBATE = cfg.get("rebate_rate", 0.0073)
 
-    # ===== 封盘/开奖时间参数（可被前端配置覆盖）=====
-    WIN_MIN = int(cfg.get("bet_window_min", 60))      # 距封盘倒计时落在 [min,max] 才下注
-    WIN_MAX = int(cfg.get("bet_window_max", 120))
+    # ===== 封盘/开奖时间参数（可被前端配置覆盖，与赢冲输缩一致）=====
+    WIN_MIN = int(cfg.get("bet_window_min", 20))      # 距封盘倒计时落在 [min,max] 才下注
+    WIN_MAX = int(cfg.get("bet_window_max", 90))      # 下注触发点：cd≤90才下（比原120延后约30秒）
     CLOSE_BUFFER = int(cfg.get("close_buffer", 10))   # 延时后仍需 >该秒数才下注
     DRAW_DELAY = int(cfg.get("draw_delay", 73))       # 封盘到开奖间隔（实测加拿大2.0=73s）
 
@@ -64,7 +64,7 @@ def _betting_loop(page, account, cfg, stop_event, log):
     start_balance = _get_balance(page) or 0
     pos_steps = [1, 1, 1]                            # 1=一阶底注, 2=二阶赢冲（下一期使用）
     last_amounts = [BASE_BET, BASE_BET, BASE_BET]    # 上期注码（结算用）
-    last_draw = None
+    last_issue = None                                # 上次已结算的开奖期号（判新开奖用，不用号码值）
     bet_placed = False
     pending_settlement = False
     last_heartbeat = 0.0
@@ -87,9 +87,10 @@ def _betting_loop(page, account, cfg, stop_event, log):
             log(f"[{account}] 🩸 止损! 亏损={profit:.0f}")
             break
 
-        draw = _get_last_draw(page)
-        if draw and draw != last_draw:
-            log(f"[{account}] 📊 开奖: {draw} | 利润: {profit:+.0f}")
+        res = _get_last_draw_with_issue(page)
+        if res and res[0] != last_issue:
+            issue, draw = res
+            log(f"[{account}] 📊 开奖: {issue}期 {draw} | 利润: {profit:+.0f}")
 
             if pending_settlement:
                 total = 0.0
@@ -119,7 +120,7 @@ def _betting_loop(page, account, cfg, stop_event, log):
                 log(f"[{account}]   本期自算: {total:+.2f} | 累计利润: {profit:+.0f}")
                 pending_settlement = False
 
-            last_draw = draw
+            last_issue = issue
 
         cd = _get_countdown(page)
         if cd < 0:

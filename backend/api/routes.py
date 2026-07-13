@@ -29,17 +29,21 @@ DEFAULT_AUTOBET = {
     "rebate_rate": 0.0073,
     "tg_token": "",
     "tg_chat_id": "",
-    # 封盘/开奖时间参数（实测加拿大2.0：cdClose峰值~135s，封盘→开奖恒73s）
-    "bet_window_min": 60,
-    "bet_window_max": 120,
-    "close_buffer": 10,
-    "draw_delay": 73,
+    # 封盘/开奖时间参数（与赢冲输缩一致）
+    # 实测加拿大2.0：cdClose峰值~135s，封盘→开奖恒为73s，整期~208s
+    "bet_window_min": 20,    # 距封盘倒计时落在 [min,max] 才下注
+    "bet_window_max": 90,    # 下注触发点：cd≤90才下（比原120延后约30秒）
+    "close_buffer": 10,      # 延时后仍需 >该秒数才下注，否则判封盘太快
+    "draw_delay": 73,        # 封盘到开奖的间隔，下注后睡 remain+该值（实测73s）
 }
 
 DEFAULT_RUSHBET = {
     "entry_url": "https://166.tt",
     "safe_code": "",
     "accounts": [{"account": "", "password": "", "port": 9222}],
+    # 启动方式：now=随开随跑（点开始就下注） / scheduled=闹钟定时（先登录待机，到点才下注）
+    "start_mode": "now",
+    "start_time": "08:00",   # 闹钟时刻 HH:MM，仅 start_mode=scheduled 时生效
     "strategy_mode": "conditional",
     "base_bet_amount": 500,
     "rush_bet_amount": 700,
@@ -57,8 +61,8 @@ DEFAULT_RUSHBET = {
     "rebate_rate": 0.0073,
     # 封盘/开奖时间参数（随平台节奏变动时在此调）
     # 实测加拿大2.0：cdClose峰值~135s，封盘→开奖恒为73s，整期~208s
-    "bet_window_min": 60,    # 距封盘倒计时落在 [min,max] 才下注（峰值135>120，窗口有效）
-    "bet_window_max": 120,
+    "bet_window_min": 20,    # 距封盘倒计时落在 [min,max] 才下注
+    "bet_window_max": 90,    # 下注触发点：cd≤90才下（比原120延后约30秒）
     "close_buffer": 10,      # 延时后仍需 >该秒数才下注，否则判封盘太快
     "draw_delay": 73,        # 封盘到开奖的间隔，下注后睡 remain+该值（实测73s）
 }
@@ -79,11 +83,12 @@ DEFAULT_PICKBET = {
     "take_profit": 25000,
     "odds": 9.92,
     "rebate_rate": 0.0073,
-    # 封盘/开奖时间参数（实测加拿大2.0：cdClose峰值~135s，封盘→开奖恒73s）
-    "bet_window_min": 60,
-    "bet_window_max": 120,
-    "close_buffer": 10,
-    "draw_delay": 73,
+    # 封盘/开奖时间参数（与赢冲输缩一致）
+    # 实测加拿大2.0：cdClose峰值~135s，封盘→开奖恒为73s，整期~208s
+    "bet_window_min": 20,    # 距封盘倒计时落在 [min,max] 才下注
+    "bet_window_max": 90,    # 下注触发点：cd≤90才下（比原120延后约30秒）
+    "close_buffer": 10,      # 延时后仍需 >该秒数才下注，否则判封盘太快
+    "draw_delay": 73,        # 封盘到开奖的间隔，下注后睡 remain+该值（实测73s）
 }
 
 DEFAULT_FOLLOWBET = {

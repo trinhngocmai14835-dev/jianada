@@ -247,16 +247,26 @@ def _get_countdown(page) -> int:
         return -2
 
 
-def _get_last_draw(page):
+def _get_last_draw_with_issue(page):
+    """返回 (期号, [三球]) —— 期号与开奖号必须配套读。
+
+    只认主页面的 #divResultInstallNo（它与 b[class^='b'] 三球是原子更新的，实测同帧跳变）。
+    不要用 frame 里的 #drawNumber：实测封盘瞬间它会倒退跳变（N → N-1 → N+1）。
+
+    靠期号而非号码值判新开奖：连续两期开出相同三球的概率约 1/1000，
+    一天约 411 期，仅比号码值会导致漏结算 + 用错期开奖号结算上一期注单。
+    """
     try:
-        # 开奖结果在主页面，不在 frame 内
-        els = page.locator("b[class^='b']").all()
+        issue_txt = page.locator("#divResultInstallNo").inner_text(timeout=2000).strip()
+        m = re.search(r"\d{6,}", issue_txt)
+        if not m:
+            return None
         nums = []
-        for el in els[:3]:
+        for el in page.locator("b[class^='b']").all()[:3]:
             t = el.inner_text(timeout=2000).strip()
             if t.isdigit():
                 nums.append(int(t))
-        return nums if len(nums) == 3 else None
+        return (m.group(0), nums) if len(nums) == 3 else None
     except Exception:
         return None
 
@@ -327,14 +337,14 @@ def _betting_loop(page, account: str, cfg: dict, stop_event: threading.Event, lo
     ODDS = cfg.get("odds", 9.92)
     REBATE = cfg.get("rebate_rate", 0.0073)
 
-    # ===== 封盘/开奖时间参数（可被前端配置覆盖）=====
-    WIN_MIN = int(cfg.get("bet_window_min", 60))      # 距封盘倒计时落在 [min,max] 才下注
-    WIN_MAX = int(cfg.get("bet_window_max", 120))
+    # ===== 封盘/开奖时间参数（可被前端配置覆盖，与赢冲输缩一致）=====
+    WIN_MIN = int(cfg.get("bet_window_min", 20))      # 距封盘倒计时落在 [min,max] 才下注
+    WIN_MAX = int(cfg.get("bet_window_max", 90))      # 下注触发点：cd≤90才下（比原120延后约30秒）
     CLOSE_BUFFER = int(cfg.get("close_buffer", 10))   # 延时后仍需 >该秒数才下注
     DRAW_DELAY = int(cfg.get("draw_delay", 73))       # 封盘到开奖间隔（实测加拿大2.0=73s）
 
     start_balance = _get_balance(page) or 0
-    last_draw = None
+    last_issue = None                                 # 上次已结算的开奖期号（判新开奖用，不用号码值）
     bet_placed = False        # 控制本局是否可以下注
     pending_settlement = False  # 上一局有待结算的注单
     targets = [None, None, None]
@@ -363,9 +373,10 @@ def _betting_loop(page, account: str, cfg: dict, stop_event: threading.Event, lo
             log(f"[{account}] 🩸 止损! 亏损={profit:.0f}")
             break
 
-        draw = _get_last_draw(page)
-        if draw and draw != last_draw:
-            log(f"[{account}] 📊 开奖: {draw} | 利润: {profit:+.0f}")
+        res = _get_last_draw_with_issue(page)
+        if res and res[0] != last_issue:
+            issue, draw = res
+            log(f"[{account}] 📊 开奖: {issue}期 {draw} | 利润: {profit:+.0f}")
             # 结算上一局（pending_settlement 在下注成功后置 True，bet_placed 重置不影响它）
             if pending_settlement and targets[0] is not None:
                 total_win = 0.0
@@ -384,7 +395,7 @@ def _betting_loop(page, account: str, cfg: dict, stop_event: threading.Event, lo
                         log(f"[{account}]   球{i+1} 开{draw[i]} ❌未中 | -投{ball_cost}+退{rebate:.2f}={ball_profit:+.2f}")
                 log(f"[{account}]   本期自算: {total_win:+.2f} | 累计利润: {profit:+.0f}")
                 pending_settlement = False
-            last_draw = draw
+            last_issue = issue
 
         cd = _get_countdown(page)
         if cd < 0:

@@ -5,15 +5,16 @@
 import asyncio
 import sys
 import time
+import re
 import random
 import threading
 import queue
-from datetime import datetime
+from datetime import datetime, timedelta
 from playwright.sync_api import sync_playwright
 
 from services.auto_bet_svc import (
     _get_chrome, _login,
-    _get_balance, _get_countdown, _get_last_draw, _place_bet,
+    _get_balance, _get_countdown, _get_last_draw_with_issue, _place_bet,
     _free_port, _sleep_interruptible,
 )
 
@@ -81,6 +82,74 @@ def _next_tier(tier, profit, tiers=TIERS, loss_thresholds=LOSS_THRESHOLDS):
     return tier, "hold"
 
 
+def _parse_hhmm(raw):
+    """'08:00' -> (8, 0)；空/非法返回 None。"""
+    if not isinstance(raw, str):
+        return None
+    m = re.match(r"^\s*(\d{1,2})\s*:\s*(\d{1,2})\s*$", raw)
+    if not m:
+        return None
+    h, mi = int(m.group(1)), int(m.group(2))
+    return (h, mi) if 0 <= h <= 23 and 0 <= mi <= 59 else None
+
+
+def _next_alarm(hhmm, now=None):
+    """算闹钟的下一次出现：今天的 HH:MM，已过则顺延次日（纯函数，便于测试）。
+
+    严格取「下一次出现」，不做「已过就立即开跑」的宽限：
+    否则「晚上23点挂上、等明早8点」会直接变成立刻开跑，那个错更危险。
+    """
+    now = now or datetime.now()
+    h, mi = hhmm
+    target = now.replace(hour=h, minute=mi, second=0, microsecond=0)
+    if target <= now:
+        target += timedelta(days=1)
+    return target
+
+
+def _fmt_span(seconds):
+    """把剩余秒数说成「3小时07分」/「7分」/「不到1分」。"""
+    total_min = max(0, int(seconds // 60))
+    h, m = divmod(total_min, 60)
+    if h:
+        return f"{h}小时{m:02d}分"
+    return f"{m}分" if m else "不到1分"
+
+
+def _wait_until_start(cfg, account, stop_event, log):
+    """闹钟定时：登录已完成，停在这里等到点再进下注循环。
+
+    随开随跑(start_mode != 'scheduled') 直接返回，行为与原来完全一致。
+    时刻非法时按随开随跑处理并告警 —— 配置填错不该让工具卡死不投注。
+    """
+    if cfg.get("start_mode", "now") != "scheduled":
+        return
+
+    hhmm = _parse_hhmm(cfg.get("start_time"))
+    if not hhmm:
+        log(f"[{account}] ⚠️ 闹钟时刻无效({cfg.get('start_time')!r})，按随开随跑处理，立即开始下注")
+        return
+
+    target = _next_alarm(hhmm)
+    remain = (target - datetime.now()).total_seconds()
+    log(f"[{account}] ⏰ 闹钟已设: {target:%Y-%m-%d %H:%M} 开始下注"
+        f"(距现在 {_fmt_span(remain)}) | 登录已完成，待机中...")
+
+    last_beat = time.time()
+    while not stop_event.is_set():
+        remain = (target - datetime.now()).total_seconds()
+        if remain <= 0:
+            break
+        _sleep_interruptible(min(60.0, remain), stop_event)
+        now = time.time()
+        if now - last_beat >= 600:   # 每10分钟一条心跳，让前端看得出还活着
+            log(f"[{account}] ⏳ 距开跑还有 {_fmt_span((target - datetime.now()).total_seconds())}")
+            last_beat = now
+
+    if not stop_event.is_set():
+        log(f"[{account}] ▶️ 闹钟到点({target:%H:%M})，开始下注")
+
+
 def _betting_loop(page, account, cfg, stop_event, log):
     STOP_LOSS = cfg.get("daily_stop_loss", 29000)
     TAKE_PROFIT = cfg.get("take_profit", 25000)
@@ -89,8 +158,8 @@ def _betting_loop(page, account, cfg, stop_event, log):
 
     # ===== 封盘/开奖时间参数（可被前端配置覆盖，默认=原写死值）=====
     # 下注窗口：仅当「距封盘倒计时」落在 [WIN_MIN, WIN_MAX] 才下注
-    WIN_MIN = int(cfg.get("bet_window_min", 60))
-    WIN_MAX = int(cfg.get("bet_window_max", 120))
+    WIN_MIN = int(cfg.get("bet_window_min", 20))
+    WIN_MAX = int(cfg.get("bet_window_max", 90))   # 下注触发点：cd≤90才下（比原120延后约30秒，更靠近封盘）
     # 封盘缓冲：延时后仍需 >CLOSE_BUFFER 秒才真正下注，否则判「封盘太快」放弃
     CLOSE_BUFFER = int(cfg.get("close_buffer", 10))
     # 开奖延迟：封盘到开奖的间隔，下注后睡 remain+DRAW_DELAY 等开奖
@@ -108,6 +177,13 @@ def _betting_loop(page, account, cfg, stop_event, log):
     except (TypeError, ValueError):
         SLEEPS = SLEEP_PERIODS
 
+    # 闹钟定时：登录已完成，停在这里等到点；随开随跑则立即返回。
+    # 放在读 start_balance 之前 —— 盈亏基准必须是真正开投那一刻的余额，不能被空等的几小时污染。
+    _wait_until_start(cfg, account, stop_event, log)
+    if stop_event.is_set():
+        log(f"[{account}] 赢冲输缩循环已停止")
+        return
+
     start_balance = _get_balance(page) or 0
     tier = 0                                        # 当前档位下标，对应 TIER_LIST（仅条件模式用）
     sleep_remaining = 0                             # 升档后剩余休眠期数（仅条件模式用）
@@ -119,7 +195,7 @@ def _betting_loop(page, account, cfg, stop_event, log):
     pos_steps = [1, 1, 1]                          # 1=底注, 2=赢冲（下一期使用）
     last_targets = [None, None, None]               # 上期投注号码（结算用）
     last_amounts = [BASE_BET, BASE_BET, BASE_BET]   # 上期注码（结算用）
-    last_draw = None
+    last_issue = None                               # 上次已结算的开奖期号（判新开奖用，不用号码值）
     bet_placed = False
     pending_settlement = False
     last_heartbeat = 0.0
@@ -129,7 +205,7 @@ def _betting_loop(page, account, cfg, stop_event, log):
         log(f"[{account}] 条件赢冲输缩启动 | {tier_desc} | 升档阈值(累计亏损){THRESHOLDS} 休眠{SLEEPS}期 | 回正归档1 | 起始余额: {start_balance}")
         log(f"[{account}] 当前档位: 档{tier + 1} 一阶{BASE_BET}/二阶{RUSH_BET}")
     else:
-        log(f"[{account}] 固定赢冲输缩启动 | 一阶{BASE_BET} / 二阶{RUSH_BET} | 起始余额: {start_balance}")
+        log(f"[{account}] 固定赢冲输缩启动 | 一阶{BASE_BET} / 二阶{RUSH_BET}（二阶只冲1期，之后无论中否都回一阶）| 起始余额: {start_balance}")
     log(f"[{account}] ⏱ 时间参数 | 下注窗口{WIN_MIN}~{WIN_MAX}s | 封盘缓冲>{CLOSE_BUFFER}s | 开奖延迟+{DRAW_DELAY}s")
 
     while not stop_event.is_set():
@@ -147,9 +223,10 @@ def _betting_loop(page, account, cfg, stop_event, log):
             log(f"[{account}] 🩸 止损! 亏损={profit:.0f}")
             break
 
-        draw = _get_last_draw(page)
-        if draw and draw != last_draw:
-            log(f"[{account}] 📊 开奖: {draw} | 利润: {profit:+.0f}")
+        res = _get_last_draw_with_issue(page)
+        if res and res[0] != last_issue:
+            issue, draw = res
+            log(f"[{account}] 📊 开奖: {issue}期 {draw} | 利润: {profit:+.0f}")
 
             if pending_settlement and last_targets[0] is not None:
                 total = 0.0
@@ -167,8 +244,12 @@ def _betting_loop(page, account, cfg, stop_event, log):
                         if pos_steps[i] < 2:
                             pos_steps[i] = 2
                             log(f"[{account}]   → 升二阶赢冲 ({BASE_BET}→{RUSH_BET})")
-                        else:
+                        elif conditional:
                             log(f"[{account}]   → 继续二阶赢冲 ({RUSH_BET})")
+                        else:
+                            # 固定模式：二阶只冲一期，中了也收回一阶重新开始
+                            pos_steps[i] = 1
+                            log(f"[{account}]   → 二阶已完成，回一阶底注 ({RUSH_BET}→{BASE_BET})")
                     else:
                         bp = -ball_cost + rebate
                         log(f"[{account}]   球{i+1} 开{draw[i]} ❌未中 | -投{ball_cost}+退{rebate:.2f}={bp:+.2f}")
@@ -200,7 +281,7 @@ def _betting_loop(page, account, cfg, stop_event, log):
                     sleep_remaining = SLEEPS
                     log(f"[{account}] ⬆️ 累计亏损{-profit:.0f}>{crossed}，升至 档{tier + 1} 一阶{BASE_BET}/二阶{RUSH_BET}，先休眠{SLEEPS}期")
 
-            last_draw = draw
+            last_issue = issue
 
         cd = _get_countdown(page)
         if cd < 0:

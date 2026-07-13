@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import {
   Card, Form, Input, InputNumber, Button, Space, Typography, Divider,
-  Row, Col, message, Tag, Collapse, Radio,
+  Row, Col, message, Tag, Collapse, Radio, Modal,
 } from 'antd'
 import { PlusOutlined, MinusCircleOutlined, PlayCircleOutlined, PauseCircleOutlined } from '@ant-design/icons'
 import { api } from '../api/client'
@@ -27,9 +27,24 @@ const COND_DEFAULTS = {
   sleep_periods: 3,
 }
 
+// 与后端 _next_alarm 同一套规则：今天的 HH:MM，已过则顺延次日。
+// 格式非法返回 null。
+const nextAlarm = (hhmm) => {
+  const m = /^\s*(\d{1,2})\s*:\s*(\d{1,2})\s*$/.exec(hhmm || '')
+  if (!m) return null
+  const h = Number(m[1])
+  const mi = Number(m[2])
+  if (h > 23 || mi > 59) return null
+  const t = new Date()
+  t.setHours(h, mi, 0, 0)
+  if (t <= new Date()) t.setDate(t.getDate() + 1)
+  return t
+}
+
 export default function RushBetPage() {
   const [form] = Form.useForm()
   const mode = Form.useWatch('strategy_mode', form) || 'conditional'
+  const startMode = Form.useWatch('start_mode', form) || 'now'
   const [status, setStatus] = useState('stopped')
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -52,21 +67,60 @@ export default function RushBetPage() {
       setSaving(true)
       await api.saveRushBetConfig(vals)
       message.success('配置已保存')
+      return true
     } catch {
       message.error('请检查表单填写')
+      return false
     } finally {
       setSaving(false)
     }
   }
 
-  const handleStart = async () => {
-    await handleSave()
+  const doStart = async () => {
     setLoading(true)
     const res = await api.startRushBet()
     message.info(res.message)
     setLoading(false)
     if (res.ok) setStatus('running')
     refresh()
+  }
+
+  const handleStart = async () => {
+    // 表单没过校验就不要拿旧配置去跑
+    if (!(await handleSave())) return
+
+    if ((form.getFieldValue('start_mode') || 'now') !== 'scheduled') {
+      doStart()
+      return
+    }
+
+    // 闹钟模式：把算出来的真实开跑时刻摆出来确认，
+    // 免得「设了08:00却在08:30点开始」等了一整天才发现。
+    const t = nextAlarm(form.getFieldValue('start_time'))
+    if (!t) {
+      message.error('开跑时刻格式不对，应为 08:00')
+      return
+    }
+    const mins = Math.round((t - new Date()) / 60000)
+    const span = mins >= 60 ? `${Math.floor(mins / 60)} 小时 ${mins % 60} 分后` : `${mins} 分钟后`
+    const day = t.getDate() === new Date().getDate() ? '今天' : `明天(${t.getMonth() + 1}-${t.getDate()})`
+    const hhmm = `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`
+    Modal.confirm({
+      title: '确认闹钟定时启动？',
+      content: (
+        <div>
+          <p style={{ marginBottom: 8 }}>
+            将于 <b style={{ color: '#fa8c16' }}>{day} {hhmm}</b> 开始下注（约 {span}）。
+          </p>
+          <p style={{ margin: 0, color: '#888', fontSize: 12 }}>
+            点确认后浏览器会立即打开并登录，登录完待机，到点自动开投。
+          </p>
+        </div>
+      ),
+      okText: '确认启动',
+      cancelText: '取消',
+      onOk: doStart,
+    })
   }
 
   const handleStop = async () => {
@@ -101,7 +155,7 @@ export default function RushBetPage() {
         <Col xs={24} lg={12}>
           <Card title="参数配置" style={{ borderRadius: 12, marginBottom: 24 }}>
             <Form form={form} layout="vertical">
-              <Collapse defaultActiveKey={['basic', 'accounts', 'strategy']} ghost forceRender>
+              <Collapse defaultActiveKey={['basic', 'start', 'accounts', 'strategy']} ghost forceRender>
                 <Panel header="🌐 网站设置" key="basic">
                   <Form.Item label="入口网址" name="entry_url" rules={[{ required: true }]}>
                     <Input placeholder="https://166.tt" />
@@ -109,6 +163,30 @@ export default function RushBetPage() {
                   <Form.Item label="安全码" name="safe_code" rules={[{ required: true }]}>
                     <Input placeholder="88361" />
                   </Form.Item>
+                </Panel>
+
+                <Panel header="⏰ 启动方式" key="start">
+                  <Form.Item label="启动方式" name="start_mode" initialValue="now" style={{ marginBottom: 12 }}>
+                    <Radio.Group optionType="button" buttonStyle="solid">
+                      <Radio.Button value="now">随开随跑</Radio.Button>
+                      <Radio.Button value="scheduled">闹钟定时</Radio.Button>
+                    </Radio.Group>
+                  </Form.Item>
+                  {startMode === 'scheduled' ? (
+                    <>
+                      <Form.Item label="开跑时刻" name="start_time" style={{ marginBottom: 8 }}
+                        rules={[{ required: true, pattern: /^([01]?\d|2[0-3]):[0-5]\d$/, message: '格式如 08:00' }]}>
+                        <Input placeholder="08:00" style={{ width: 160 }} />
+                      </Form.Item>
+                      <div style={{ color: '#614700', fontSize: 12, lineHeight: 1.6, background: '#fffbe6',
+                        border: '1px solid #ffe58f', borderRadius: 6, padding: '6px 10px' }}>
+                        点「保存并启动」后浏览器立即打开并登录，登录完待机不投注，到点自动开投。<br />
+                        若设定时刻今天已过，则等到<b>次日</b>该时刻（启动时会弹窗确认具体日期）。
+                      </div>
+                    </>
+                  ) : (
+                    <div style={{ color: '#888', fontSize: 12 }}>点「保存并启动」立刻登录并开始下注。</div>
+                  )}
                 </Panel>
 
                 <Panel header="👤 账号列表" key="accounts">
