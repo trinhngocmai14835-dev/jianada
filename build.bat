@@ -91,6 +91,8 @@ pyinstaller ^
   --hidden-import "services.follow_bet_svc" ^
   --hidden-import "services.rush_bet_svc" ^
   --hidden-import "services.pick_bet_svc" ^
+  --hidden-import "services.rotate_bet_svc" ^
+  --hidden-import "services.settlement_guard" ^
   --paths "%~dp0backend\obf_build" ^
   "%MAIN_PY%"
 if errorlevel 1 (echo 打包失败 & exit /b 1)

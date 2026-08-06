@@ -143,7 +143,7 @@ export default function RushBetPage() {
         <Space>
           <Button icon={<PlayCircleOutlined />} type="primary" onClick={handleStart} loading={loading} disabled={isRunning}
             style={{ background: '#fa8c16', borderColor: '#fa8c16' }}>
-            保存并启动
+            {startMode === 'scheduled' ? '保存并定时启动' : '保存并启动'}
           </Button>
           <Button icon={<PauseCircleOutlined />} danger onClick={handleStop} loading={loading} disabled={!isRunning}>
             停止
@@ -180,7 +180,7 @@ export default function RushBetPage() {
                       </Form.Item>
                       <div style={{ color: '#614700', fontSize: 12, lineHeight: 1.6, background: '#fffbe6',
                         border: '1px solid #ffe58f', borderRadius: 6, padding: '6px 10px' }}>
-                        点「保存并启动」后浏览器立即打开并登录，登录完待机不投注，到点自动开投。<br />
+                        点「保存并定时启动」后浏览器立即打开并登录，登录完待机不投注，到点自动开投。<br />
                         若设定时刻今天已过，则等到<b>次日</b>该时刻（启动时会弹窗确认具体日期）。
                       </div>
                     </>
@@ -289,18 +289,32 @@ export default function RushBetPage() {
                       </Row>
                     </div>
                   ) : (
-                    <Row gutter={16}>
-                      <Col span={12}>
-                        <Form.Item label="一阶底注 (元)" name="base_bet_amount" tooltip="首次或输后的注码">
-                          <InputNumber style={{ width: '100%' }} min={1} />
-                        </Form.Item>
-                      </Col>
-                      <Col span={12}>
-                        <Form.Item label="二阶赢冲 (元)" name="rush_bet_amount" tooltip="命中一次后升阶使用的注码">
-                          <InputNumber style={{ width: '100%' }} min={1} />
-                        </Form.Item>
-                      </Col>
-                    </Row>
+                    <>
+                      <Row gutter={16}>
+                        <Col span={12}>
+                          <Form.Item label="一阶底注 (元)" name="base_bet_amount" tooltip="首次或输后的注码">
+                            <InputNumber style={{ width: '100%' }} min={1} />
+                          </Form.Item>
+                        </Col>
+                        <Col span={12}>
+                          <Form.Item label="二阶赢冲 (元)" name="rush_bet_amount" tooltip="命中一次后升阶使用的注码">
+                            <InputNumber style={{ width: '100%' }} min={1} />
+                          </Form.Item>
+                        </Col>
+                      </Row>
+                      <Form.Item
+                        label="虚拟亏损触发实投（元）"
+                        name="virtual_loss_trigger"
+                        initialValue={0}
+                        tooltip="0=立即真实投注；填8000=先按固定赢冲输缩模拟选号和结算，虚拟累计亏损达到8000后，从下一期继承当前一阶/二阶状态开始实投"
+                      >
+                        <InputNumber style={{ width: '100%' }} min={0} placeholder="0 表示立即实投" />
+                      </Form.Item>
+                      <div style={{ color: '#614700', fontSize: 12, lineHeight: 1.6, background: '#fffbe6',
+                        border: '1px solid #ffe58f', borderRadius: 6, padding: '6px 10px', marginBottom: 12 }}>
+                        填 0：启动后立即真实投注。填大于 0：先只模拟投注，不真实下单；虚拟累计亏损达到该金额后，下一期开始真实投注，并继承模拟时的一阶/二阶状态。
+                      </div>
+                    </>
                   )}
                   <Row gutter={16}>
                     <Col span={12}>

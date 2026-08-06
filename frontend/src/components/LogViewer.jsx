@@ -6,9 +6,17 @@ const LEVEL_COLORS = { error: '#ff4d4f', warn: '#faad14', info: '#52c41a' }
 
 export default function LogViewer({ taskId, running }) {
   const [logs, setLogs] = useState([])
+  const boxRef = useRef(null)
   const bottomRef = useRef(null)
-  const lastSeqRef = useRef(0)   // 单调递增序号，永不因 buffer 滚动失效
+  const lastSeqRef = useRef(0)
   const timerRef = useRef(null)
+  const autoFollowRef = useRef(true)
+
+  useEffect(() => {
+    setLogs([])
+    lastSeqRef.current = 0
+    autoFollowRef.current = true
+  }, [taskId])
 
   useEffect(() => {
     if (timerRef.current) clearInterval(timerRef.current)
@@ -24,20 +32,32 @@ export default function LogViewer({ taskId, running }) {
     }
 
     if (!running) {
-      // 服务停止后延迟一次拉取，捕获退出日志
       timerRef.current = setTimeout(poll, 1000)
       return () => clearTimeout(timerRef.current)
     }
 
-    // 立即拉一次（包含历史）再轮询
     poll()
     timerRef.current = setInterval(poll, 2000)
     return () => clearInterval(timerRef.current)
   }, [taskId, running])
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    if (autoFollowRef.current) {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    }
   }, [logs])
+
+  const handleScroll = () => {
+    const el = boxRef.current
+    if (!el) return
+    const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+    autoFollowRef.current = distanceToBottom < 40
+  }
+
+  const handleClear = () => {
+    setLogs([])
+    autoFollowRef.current = true
+  }
 
   return (
     <div style={{ position: 'relative' }}>
@@ -45,11 +65,13 @@ export default function LogViewer({ taskId, running }) {
         size="small"
         icon={<ClearOutlined />}
         style={{ position: 'absolute', top: 8, right: 8, zIndex: 1 }}
-        onClick={() => { setLogs([]); lastSeqRef.current = 0 }}
+        onClick={handleClear}
       >
         清空
       </Button>
       <div
+        ref={boxRef}
+        onScroll={handleScroll}
         style={{
           background: '#0d1117',
           color: '#e6edf3',

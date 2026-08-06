@@ -10,6 +10,7 @@ from services.auto_bet_svc import run as auto_bet_run
 from services.follow_bet_svc import run as follow_bet_run, _launch_source_browser
 from services.rush_bet_svc import run as rush_bet_run
 from services.pick_bet_svc import run as pick_bet_run
+from services.rotate_bet_svc import run as rotate_bet_run
 
 router = APIRouter()
 
@@ -47,6 +48,7 @@ DEFAULT_RUSHBET = {
     "strategy_mode": "conditional",
     "base_bet_amount": 500,
     "rush_bet_amount": 700,
+    "virtual_loss_trigger": 0,  # 固定赢冲输缩：0=立即实投；>0=先模拟，虚拟累计亏损达到该金额后实投
     # 条件赢冲输缩档位参数（可在前端手动修改）
     "conditional_tiers": [
         {"base": 50, "rush": 70},
@@ -89,6 +91,28 @@ DEFAULT_PICKBET = {
     "bet_window_max": 90,    # 下注触发点：cd≤90才下（比原120延后约30秒）
     "close_buffer": 10,      # 延时后仍需 >该秒数才下注，否则判封盘太快
     "draw_delay": 73,        # 封盘到开奖的间隔，下注后睡 remain+该值（实测73s）
+}
+
+DEFAULT_ROTATEBET = {
+    "entry_url": "https://166.tt",
+    "safe_code": "",
+    "accounts": [{"account": "", "password": "", "port": 9222}],
+    "number_sets": [
+        {"set_a": [0, 1, 3, 5, 8], "set_b": [2, 4, 6, 7, 9]},
+        {"set_a": [0, 1, 3, 5, 8], "set_b": [2, 4, 6, 7, 9]},
+        {"set_a": [0, 1, 3, 5, 8], "set_b": [2, 4, 6, 7, 9]},
+    ],
+    "base_bet_amount": 100,
+    "loss_multiplier": 1.3,
+    "max_losses": 5,
+    "daily_stop_loss": 29000,
+    "take_profit": 25000,
+    "start_mode": "now",
+    "start_time": "09:00",
+    "bet_window_min": 20,
+    "bet_window_max": 90,
+    "close_buffer": 10,
+    "draw_delay": 73,
 }
 
 DEFAULT_FOLLOWBET = {
@@ -234,6 +258,19 @@ def _check_license():
     return valid, msg
 
 
+@router.get("/config/rotatebet")
+def get_rotatebet_config():
+    return {**DEFAULT_ROTATEBET, **get_config("rotatebet_config", {})}
+
+
+@router.post("/config/rotatebet")
+def save_rotatebet_config(data: dict):
+    existing = get_config("rotatebet_config", DEFAULT_ROTATEBET)
+    existing.update(data)
+    set_config("rotatebet_config", existing)
+    return {"ok": True}
+
+
 @router.get("/status")
 def get_status():
     tm = TaskManager.get()
@@ -242,6 +279,7 @@ def get_status():
         "rushbet": tm.status("rushbet"),
         "pickbet": tm.status("pickbet"),
         "followbet": tm.status("followbet"),
+        "rotatebet": tm.status("rotatebet"),
     }
 
 
@@ -290,6 +328,22 @@ def start_pickbet():
 @router.post("/pickbet/stop")
 def stop_pickbet():
     ok, msg = TaskManager.get().stop("pickbet")
+    return {"ok": ok, "message": msg}
+
+
+@router.post("/rotatebet/start")
+def start_rotatebet():
+    ok, msg = _check_license()
+    if not ok:
+        return {"ok": False, "message": msg}
+    cfg = {**DEFAULT_ROTATEBET, **get_config("rotatebet_config", {})}
+    ok, msg = TaskManager.get().start("rotatebet", rotate_bet_run, cfg)
+    return {"ok": ok, "message": msg}
+
+
+@router.post("/rotatebet/stop")
+def stop_rotatebet():
+    ok, msg = TaskManager.get().stop("rotatebet")
     return {"ok": ok, "message": msg}
 
 

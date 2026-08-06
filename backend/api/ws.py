@@ -11,7 +11,7 @@ router = APIRouter()
 
 # 只把"有用流水"落盘：登录/下注/结算/止盈止损；其余啰嗦日志不入库
 _FLOW_MARKERS = ('登录完成', '本期选号', '下注成功', '跟客户', '开奖',
-                 '本期自算', '本期盈亏', '本期总盈亏', '止盈', '止损', '锁利')
+                 '本期自算', '本期盈亏', '本期总盈亏', '止盈', '止损', '锁利', '审计')
 _ACC_RE = re.compile(r'\[([^\]]+)\]')
 
 
@@ -30,7 +30,7 @@ def _persist_flow(task_id, m):
 _subscribers: dict[str, set] = {}
 
 # 每个 task 保留最近 1000 条，每条带全局单调 seq
-_TASK_IDS = ["autobet", "rushbet", "pickbet", "followbet"]
+_TASK_IDS = ["autobet", "rushbet", "pickbet", "followbet", "rotatebet"]
 
 _history: dict[str, deque] = {tid: deque(maxlen=1000) for tid in _TASK_IDS}
 _seq: dict[str, int] = {tid: 0 for tid in _TASK_IDS}

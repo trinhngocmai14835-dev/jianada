@@ -111,52 +111,60 @@ def _get_chrome() -> str | None:
 # ─── 登录流程 ────────────────────────────────────────────────
 
 def _login(page, context, account: str, password: str, entry_url: str, safe_code: str, log, line_kw: str = "会员线路"):
-    log(f"[{account}] 打开入口 {entry_url}...")
+    log(f"[{account}] 登录阶段 1/8：打开入口 {entry_url}")
     page.goto(entry_url, wait_until="domcontentloaded", timeout=60000)
     time.sleep(2)
+
+    log(f"[{account}] 登录阶段 2/8：输入安全码并搜索{line_kw}")
     page.locator('input[placeholder="请输入您的关键字"]').fill(safe_code)
     page.locator('a:has-text("搜索一下")').click()
     page.wait_for_load_state("domcontentloaded", timeout=15000)
     time.sleep(2)
 
-    # 选择线路（会员账号走"会员线路"，采集/代理账号走"代理线路"）
+    log(f"[{account}] 登录阶段 3/8：等待线路列表")
     page.wait_for_selector("table", timeout=30000)
     time.sleep(1)
     links = page.locator(f'td:has-text("{line_kw}") + td a')
     count = links.count()
     if count == 0:
         raise Exception(f"找不到{line_kw}")
+    log(f"[{account}] 登录阶段 3/8：找到{count}条{line_kw}，开始尝试可用线路")
 
     login_page = None
     for i in range(count):
         try:
+            log(f"[{account}] 登录阶段 4/8：尝试打开线路 {i + 1}/{count}")
             with context.expect_page(timeout=15000) as npi:
                 links.nth(i).click()
             np = npi.value
             np.wait_for_load_state("domcontentloaded", timeout=15000)
             time.sleep(3)
             if _is_cf(np):
+                log(f"[{account}] 登录阶段 4/8：线路 {i + 1}/{count} 被CF拦截，切换下一条")
                 np.close()
                 continue
             login_page = np
             login_page.on("dialog", lambda d: d.accept())
             break
-        except Exception:
+        except Exception as e:
+            log(f"[{account}] 登录阶段 4/8：线路 {i + 1}/{count} 打开失败：{e}")
             continue
 
     if not login_page:
         raise Exception(f"所有{line_kw}均被CF拦截")
 
-    log(f"[{account}] 进入登录页: {login_page.url[:60]}")
+    log(f"[{account}] 登录阶段 5/8：进入登录页 {login_page.url[:60]}")
     login_base = login_page.url.split("?")[0]
 
     for attempt in range(1, 9):
         cur = login_page.url
         if "/Home/Index" in cur or "/Member/Agreement" in cur:
             break
+        log(f"[{account}] 登录阶段 6/8：第{attempt}次提交登录")
         try:
             login_page.locator('input[name="account"]').wait_for(state="visible", timeout=5000)
         except Exception:
+            log(f"[{account}] 登录阶段 6/8：登录框未出现，刷新登录页后重试")
             login_page.goto(login_base, wait_until="domcontentloaded", timeout=15000)
             time.sleep(2)
             cur = login_page.url
@@ -165,10 +173,12 @@ def _login(page, context, account: str, password: str, entry_url: str, safe_code
             try:
                 login_page.locator('input[name="account"]').wait_for(state="visible", timeout=8000)
             except Exception:
+                log(f"[{account}] 登录阶段 6/8：仍未找到登录框，进入下一次尝试")
                 continue
 
         login_page.locator('input[name="account"]').fill(account)
         login_page.locator('input[name="password"]').fill(password)
+        log(f"[{account}] 登录阶段 6/8：账号密码已填写，开始识别验证码")
 
         captcha_img = login_page.locator('.code img, dt img, img[alt="none"]').first
         captcha_img.wait_for(state="visible", timeout=5000)
@@ -177,12 +187,13 @@ def _login(page, context, account: str, password: str, entry_url: str, safe_code
         captcha_text = re.sub(r'[^a-zA-Z0-9]', '', _solve_captcha(captcha_bytes))
 
         if len(captcha_text) < 3:
-            log(f"[{account}] 验证码识别失败，重试 ({attempt}/8)")
+            log(f"[{account}] 登录阶段 6/8：验证码识别失败，重试 ({attempt}/8)")
             captcha_img.click()
             time.sleep(1)
             continue
 
         login_page.locator('input[name="code"]').fill(captcha_text)
+        log(f"[{account}] 登录阶段 6/8：验证码已填写，提交登录")
         time.sleep(0.3)
         try:
             with login_page.expect_navigation(timeout=10000, wait_until="domcontentloaded"):
@@ -195,34 +206,34 @@ def _login(page, context, account: str, password: str, entry_url: str, safe_code
             break
         log(f"[{account}] 第{attempt}次登录未成功，重试...")
 
-    # 同意协议
     if "/Member/Agreement" in login_page.url:
+        log(f"[{account}] 登录阶段 7/8：检测到协议页，点击同意")
         login_page.locator('a:has-text("同意")').first.click()
         login_page.wait_for_load_state("domcontentloaded", timeout=15000)
         time.sleep(2)
 
-    # 关闭公告
+    closed = 0
     for _ in range(10):
         try:
             btns = login_page.locator('.ui-dialog:visible button:has-text("确定")')
             if btns.count() == 0:
                 break
             btns.last.click(timeout=3000)
+            closed += 1
             time.sleep(0.8)
         except Exception:
             break
+    log(f"[{account}] 登录阶段 7/8：公告弹窗处理完成，已关闭{closed}个")
 
-    # 导航到单球1~3
+    log(f"[{account}] 登录阶段 8/8：进入单球1~3下注页")
     try:
         login_page.locator('a[href*="page=hm13"]').first.click()
         time.sleep(3)
-    except Exception:
-        pass
+    except Exception as e:
+        log(f"[{account}] 登录阶段 8/8：未能自动进入单球页，继续使用当前页：{e}")
 
     log(f"[{account}] 登录完成，当前页: {login_page.url[:60]}")
     return login_page
-
-
 # ─── 下注逻辑 ────────────────────────────────────────────────
 
 def _get_balance(page) -> float | None:
