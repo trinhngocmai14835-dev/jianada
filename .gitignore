@@ -35,3 +35,8 @@ build_error.txt
 .DS_Store
 Thumbs.db
 desktop.ini
+
+.wrangler/
+release_upload/
+cloudflare/**/.admin-token.local
+cloudflare/**/.worker-url.local

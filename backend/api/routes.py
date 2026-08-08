@@ -11,6 +11,7 @@ from services.follow_bet_svc import run as follow_bet_run, _launch_source_browse
 from services.rush_bet_svc import run as rush_bet_run
 from services.pick_bet_svc import run as pick_bet_run
 from services.rotate_bet_svc import run as rotate_bet_run
+from services.account_whitelist import get_account_whitelist_status, check_accounts_allowed
 
 router = APIRouter()
 
@@ -156,6 +157,11 @@ def activate_license(req: ActivateRequest):
     return {"valid": valid, "message": msg, "expiry": expiry}
 
 
+@router.get("/account-whitelist")
+def account_whitelist_status():
+    return get_account_whitelist_status()
+
+
 # ── 配置 ──────────────────────────────────────────────────────
 
 @router.get("/config/autobet")
@@ -249,6 +255,28 @@ def save_followbet_config(data: dict):
 
 # ── 任务控制 ──────────────────────────────────────────────────
 
+
+def _login_accounts_for_task(task_id: str, cfg: dict):
+    if task_id == "followbet":
+        accounts = [cfg.get("source_account", "")]
+        accounts.extend(
+            f.get("account", "")
+            for f in (cfg.get("followers") or [])
+            if isinstance(f, dict)
+        )
+        return accounts
+    return [
+        a.get("account", "")
+        for a in (cfg.get("accounts") or [])
+        if isinstance(a, dict)
+    ]
+
+
+def _check_account_whitelist(task_id: str, cfg: dict):
+    ok, msg, _status = check_accounts_allowed(_login_accounts_for_task(task_id, cfg))
+    return ok, msg
+
+
 def _check_license():
     """返回 (ok: bool, msg: str)，任务启动前调用"""
     lic = get_license()
@@ -289,6 +317,9 @@ def start_autobet():
     if not ok:
         return {"ok": False, "message": msg}
     cfg = {**DEFAULT_AUTOBET, **get_config("autobet_config", {})}
+    ok, msg = _check_account_whitelist("autobet", cfg)
+    if not ok:
+        return {"ok": False, "message": msg}
     ok, msg = TaskManager.get().start("autobet", auto_bet_run, cfg)
     return {"ok": ok, "message": msg}
 
@@ -305,6 +336,9 @@ def start_rushbet():
     if not ok:
         return {"ok": False, "message": msg}
     cfg = {**DEFAULT_RUSHBET, **get_config("rushbet_config", {})}
+    ok, msg = _check_account_whitelist("rushbet", cfg)
+    if not ok:
+        return {"ok": False, "message": msg}
     ok, msg = TaskManager.get().start("rushbet", rush_bet_run, cfg)
     return {"ok": ok, "message": msg}
 
@@ -321,6 +355,9 @@ def start_pickbet():
     if not ok:
         return {"ok": False, "message": msg}
     cfg = {**DEFAULT_PICKBET, **get_config("pickbet_config", {})}
+    ok, msg = _check_account_whitelist("pickbet", cfg)
+    if not ok:
+        return {"ok": False, "message": msg}
     ok, msg = TaskManager.get().start("pickbet", pick_bet_run, cfg)
     return {"ok": ok, "message": msg}
 
@@ -337,6 +374,9 @@ def start_rotatebet():
     if not ok:
         return {"ok": False, "message": msg}
     cfg = {**DEFAULT_ROTATEBET, **get_config("rotatebet_config", {})}
+    ok, msg = _check_account_whitelist("rotatebet", cfg)
+    if not ok:
+        return {"ok": False, "message": msg}
     ok, msg = TaskManager.get().start("rotatebet", rotate_bet_run, cfg)
     return {"ok": ok, "message": msg}
 
@@ -353,6 +393,9 @@ def start_followbet():
     if not ok:
         return {"ok": False, "message": msg}
     cfg = _normalize_followbet({**DEFAULT_FOLLOWBET, **get_config("followbet_config", {})})
+    ok, msg = _check_account_whitelist("followbet", cfg)
+    if not ok:
+        return {"ok": False, "message": msg}
     ok, msg = TaskManager.get().start("followbet", follow_bet_run, cfg)
     return {"ok": ok, "message": msg}
 

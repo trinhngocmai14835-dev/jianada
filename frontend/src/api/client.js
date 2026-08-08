@@ -6,14 +6,30 @@ async function req(method, path, body) {
     headers: { 'Content-Type': 'application/json' },
   }
   if (body) opts.body = JSON.stringify(body)
-  const res = await fetch(BASE + path, opts)
-  return res.json()
+
+  try {
+    const res = await fetch(BASE + path, opts)
+    const text = await res.text()
+    let data = {}
+    try {
+      data = text ? JSON.parse(text) : {}
+    } catch {
+      data = { ok: false, message: text || `请求失败：HTTP ${res.status}` }
+    }
+    if (!res.ok) {
+      return { ok: false, message: data.message || `请求失败：HTTP ${res.status}` }
+    }
+    return data
+  } catch (err) {
+    return { ok: false, message: `请求失败：${err?.message || err}` }
+  }
 }
 
 export const api = {
   // 授权
   getLicense: () => req('GET', '/license'),
   activate: (key) => req('POST', '/license/activate', { key }),
+  getAccountWhitelist: () => req('GET', '/account-whitelist'),
 
   // 配置
   getAutoBetConfig: () => req('GET', '/config/autobet'),
@@ -58,7 +74,6 @@ export function createLogSocket(taskId, onMessage) {
       onMessage(JSON.parse(e.data))
     } catch {}
   }
-  // keep-alive ping every 20s
   const ping = setInterval(() => { if (ws.readyState === 1) ws.send('ping') }, 20000)
   ws.onclose = () => clearInterval(ping)
   return ws
