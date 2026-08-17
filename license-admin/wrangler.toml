@@ -1,0 +1,24 @@
+﻿name = "jianada-license-admin"
+main = "worker/index.js"
+compatibility_date = "2026-08-17"
+workers_dev = true
+preview_urls = false
+
+[assets]
+directory = "./web"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+
+[vars]
+ADMIN_USERNAME = "admin"
+SESSION_COOKIE_NAME = "ja_admin_session"
+ACCOUNT_WHITELIST_PUBLIC_BASE_URL = "https://pub-465f078b4f484662b30eb39d27ae5155.r2.dev/account-whitelist"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "jianada-license-admin-db"
+database_id = "5e91378f-1ee5-4a0e-8e0a-d83dce7faa01"
+
+[[r2_buckets]]
+binding = "ACCOUNT_WHITELIST_BUCKET"
+bucket_name = "pro-downloads"

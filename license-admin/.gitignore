@@ -1,0 +1,4 @@
+﻿.admin-password.local.txt
+.dev.vars
+.wrangler/
+dist-dry-run/
