@@ -75,10 +75,19 @@ def test_rotate_chase_amounts():
     reset = path.on_lose(299)
     check(reset is True and path.get_bet() == 100, "max misses reset to base")
 
+    path.active = True
     path.on_lose(100)
     path.on_win()
     check(path.loss_count == 0 and path.loss_history == [] and path.get_bet() == 100,
           "hit resets chase state")
+    check(path.active is False and path.entry_loss_count == 0,
+          "hit returns non-zero trigger path to observation")
+
+    immediate = _PathState(base=100, multiplier=1.3, max_losses=3, entry_miss_trigger=0)
+    immediate.on_lose(100)
+    immediate.on_win()
+    check(immediate.active is True and immediate.get_bet() == 100,
+          "hit keeps zero-trigger path in direct betting mode")
 
 
 def test_rotate_entry_trigger_state():

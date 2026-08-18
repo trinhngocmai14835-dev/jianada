@@ -1,4 +1,4 @@
-﻿@echo off
+@echo off
 chcp 65001 > nul
 echo ============================================
 echo   自动下单系统 Pro — 一键打包
@@ -77,6 +77,7 @@ pyinstaller ^
   --hidden-import "tkinter.messagebox" ^
   --exclude-module "matplotlib" ^
   --collect-all "cryptography" ^
+  --collect-data "certifi" ^
   --hidden-import "sqlite3" ^
   --hidden-import "_sqlite3" ^
   --hidden-import "api" ^

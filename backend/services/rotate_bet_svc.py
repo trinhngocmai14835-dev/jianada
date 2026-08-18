@@ -117,9 +117,11 @@ class _PathState:
         return False
 
     def on_win(self):
-        """命中：重置追损计数，下一把回归一阶底注。"""
+        """命中：清空追损；非直接开始模式下重新回到入场观察。"""
         self.loss_count = 0
         self.loss_history = []
+        self.entry_loss_count = 0
+        self.active = self.entry_miss_trigger == 0
 
     def on_lose(self, bet: int) -> bool:
         """未中：记录本把注额，返回 True 表示已满最大次数并自动重置。"""
@@ -298,6 +300,7 @@ def _betting_loop(page, account, cfg, stop_event, log):
                         log(f"[{account}] 警告：开奖期号从 {pending_issue} 跳到 {issue}，按最新稳定开奖结果结算，请核对记录")
                     log(f"[{account}] 开奖结算 | 期号={issue} 开奖={draw} | 投注锚点={pending_issue} | 当前利润={profit:+.0f}")
 
+                    won_positions = [False] * NUM_POSITIONS
                     for i in range(NUM_POSITIONS):
                         if not ENABLED_POSITIONS[i]:
                             continue
@@ -309,15 +312,18 @@ def _betting_loop(page, account, cfg, stop_event, log):
                         set_label = "A" if nums == list(number_sets[i][0]) else "B"
 
                         if hit:
-                            log(f"[{account}]   球{i+1} 开{draw[i]}【中奖】| 投{set_label}组{nums} | 本球注码={amt} -> 下把回到底注")
                             paths[i].on_win()
+                            won_positions[i] = not paths[i].active
+                            next_desc = "下期继续底注实投" if paths[i].active else f"回到入场观察，重新等待连续{paths[i].entry_miss_trigger}次未中"
+                            log(f"[{account}]   球{i+1} 开{draw[i]}【中奖】| 投{set_label}组{nums} | 本球注码={amt} -> {next_desc}")
                         else:
                             reset = paths[i].on_lose(amt)
                             if reset:
                                 log(f"[{account}]   球{i+1} 开{draw[i]}【未中】| 投{set_label}组{nums} | 本球注码={amt} -> 已满{MAX_LOSSES}把，重置到底注")
                             else:
                                 log(f"[{account}]   球{i+1} 开{draw[i]}【未中】| 投{set_label}组{nums} | 本球注码={amt} -> 第{paths[i].loss_count}次追损，下把注码={paths[i].get_bet()}")
-                    _observe_entry_draw(paths, number_sets, draw, account, log, targets=last_targets, rotate_after=False, enabled_positions=ENABLED_POSITIONS)
+                    observe_enabled = [ENABLED_POSITIONS[i] and not won_positions[i] for i in range(NUM_POSITIONS)]
+                    _observe_entry_draw(paths, number_sets, draw, account, log, targets=last_targets, rotate_after=False, enabled_positions=observe_enabled)
                     pending_settlement = False
                     pending_issue = None
                     last_issue = issue

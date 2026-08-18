@@ -5,12 +5,18 @@ keeps a last-good cache, and every task start checks configured login accounts.
 """
 import json
 import os
+import ssl
 import urllib.error
 import urllib.request
 from datetime import datetime
 
 from core.db import get_config, set_config
 from core.license import get_machine_id
+
+try:
+    import certifi
+except Exception:
+    certifi = None
 
 
 ACCOUNT_WHITELIST_BASE_URL = os.getenv(
@@ -20,6 +26,10 @@ ACCOUNT_WHITELIST_BASE_URL = os.getenv(
 CACHE_KEY = "account_whitelist_cache"
 HTTP_TIMEOUT = 8
 
+def _ssl_context():
+    if certifi is None:
+        return ssl.create_default_context()
+    return ssl.create_default_context(cafile=certifi.where())
 
 def normalize_account(value) -> str:
     return str(value or "").strip().lower()
@@ -44,7 +54,7 @@ def _fetch_remote_status(machine_id: str) -> dict:
     url = ACCOUNT_WHITELIST_BASE_URL.rstrip("/") + f"/{machine_id}.json"
     req = urllib.request.Request(url, headers={"accept": "application/json", "user-agent": "autobet-pro/1.0"})
     try:
-        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as res:
+        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT, context=_ssl_context()) as res:
             data = json.loads(res.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         if exc.code in (403, 404):

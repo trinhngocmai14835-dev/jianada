@@ -321,7 +321,7 @@ export default function RotateBetPage() {
                     background: '#fff7e6', border: '1px solid #ffd591', borderRadius: 8,
                     padding: '10px 14px', marginBottom: 12, fontSize: 12, color: '#874d00',
                   }}>
-                    启动后每一路先独立观察，达到设定的连续未中次数后才开始实投。命中→本路追损状态清零，下把回到底注。
+                    启动后每一路先独立观察，达到设定的连续未中次数后才开始实投。命中→本路退出实投，重新回到入场观察。
                     实投未中→下把注码 = 本轮已投总额 × 追损倍率；连续未中满最大把数→重置到底注。
                   </div>
                   <Form.Item
