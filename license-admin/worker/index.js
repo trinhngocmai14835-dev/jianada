@@ -1,4 +1,4 @@
-﻿const JSON_HEADERS = {
+const JSON_HEADERS = {
   "content-type": "application/json; charset=utf-8",
   "cache-control": "no-store",
 };
@@ -218,20 +218,23 @@ async function listCustomers(env) {
   });
 }
 
-async function getCustomer(env, customerId) {
+async function customerPayload(env, customerId) {
   const customer = await env.DB.prepare(
     "SELECT id, name, contact, remark, status, created_at, updated_at FROM customers WHERE id = ?",
   ).bind(customerId).first();
-  if (!customer) return json({ ok: false, message: "Customer not found" }, 404);
+  if (!customer) return null;
   const machines = await env.DB.prepare(
     `SELECT id, customer_id, machine_id, expiry, enabled, accounts_json, remark,
             last_license_key, last_synced_at, created_at, updated_at
      FROM machines WHERE customer_id = ? ORDER BY updated_at DESC`,
   ).bind(customerId).all();
-  return json({
-    ok: true,
-    customer: { ...customer, machines: (machines.results || []).map(normalizeMachineRow) },
-  });
+  return { ...customer, machines: (machines.results || []).map(normalizeMachineRow) };
+}
+
+async function getCustomer(env, customerId) {
+  const customer = await customerPayload(env, customerId);
+  if (!customer) return json({ ok: false, message: "Customer not found" }, 404);
+  return json({ ok: true, customer });
 }
 
 async function createCustomer(request, env) {
@@ -285,7 +288,7 @@ async function addMachine(request, env, customerId) {
   if (!customer) return json({ ok: false, message: "Customer not found" }, 404);
   const body = await readJson(request);
   const machineId = normalizeMachineId(body.machine_id);
-  if (!machineId) return json({ ok: false, message: "Machine ID must be 16 alphanumeric characters" }, 400);
+  if (!machineId) return json({ ok: false, message: "Machine ID must be 16-32 alphanumeric characters" }, 400);
   const now = nowIso();
   await env.DB.prepare(
     `INSERT INTO machines (
@@ -312,6 +315,7 @@ async function updateMachine(request, env, machineIdParam) {
   const body = await readJson(request);
   const current = await getMachine(env, machineId);
   if (!current) return json({ ok: false, message: "Machine not found" }, 404);
+  const accounts = cleanAccounts(body.accounts || []);
   await env.DB.prepare(
     `UPDATE machines
      SET expiry = ?, enabled = ?, accounts_json = ?, remark = ?, updated_at = ?
@@ -319,13 +323,16 @@ async function updateMachine(request, env, machineIdParam) {
   ).bind(
     normalizeExpiry(body.expiry),
     body.enabled === false ? 0 : 1,
-    JSON.stringify(cleanAccounts(body.accounts || [])),
+    JSON.stringify(accounts),
     cleanText(body.remark),
     nowIso(),
     machineId,
   ).run();
-  await audit(env, "machine.update", machineId, { accounts: cleanAccounts(body.accounts || []) });
-  return getCustomer(env, current.customer_id);
+  await audit(env, "machine.update", machineId, { accounts });
+  const r2 = await publishWhitelist(env, machineId);
+  const customer = await customerPayload(env, current.customer_id);
+  if (!customer) return json({ ok: false, message: "Customer not found" }, 404);
+  return json({ ok: true, customer, r2 });
 }
 
 async function generateLicense(request, env, machineIdParam) {
@@ -358,36 +365,193 @@ async function generateLicense(request, env, machineIdParam) {
 }
 
 async function syncWhitelist(env, machineIdParam) {
-  if (!env.ACCOUNT_WHITELIST_BUCKET) {
-    return json({ ok: false, message: "R2 binding ACCOUNT_WHITELIST_BUCKET is not configured" }, 500);
-  }
   const machineId = normalizeMachineId(machineIdParam);
-  const machine = await getMachine(env, machineId);
-  if (!machine) return json({ ok: false, message: "Machine not found" }, 404);
-  const record = whitelistRecord(machine);
-  const key = `account-whitelist/${machineId}.json`;
-  await env.ACCOUNT_WHITELIST_BUCKET.put(key, JSON.stringify(record, null, 2) + "\n", {
-    httpMetadata: { contentType: "application/json; charset=utf-8" },
-  });
-  const syncedAt = nowIso();
-  await env.DB.prepare(
-    "UPDATE machines SET last_synced_at = ?, updated_at = ? WHERE machine_id = ?",
-  ).bind(syncedAt, syncedAt, machineId).run();
-  await audit(env, "r2.sync", machineId, { key });
-  return json({ ok: true, key, record: { ...record, updated_at: syncedAt } });
+  if (!machineId) return json({ ok: false, message: "Invalid machine ID" }, 400);
+  const r2 = await publishWhitelist(env, machineId);
+  return json({ ok: true, ...r2 });
 }
 
 async function getR2Record(env, machineIdParam) {
   const machineId = normalizeMachineId(machineIdParam);
   if (!machineId) return json({ ok: false, message: "Invalid machine ID" }, 400);
+  const verification = await verifyPublicWhitelist(env, machineId);
+  return json({ ok: true, record: verification.record || null, verification });
+}
+
+async function publishWhitelist(env, machineIdParam) {
+  const machineId = normalizeMachineId(machineIdParam);
+  const key = machineId ? `account-whitelist/${machineId}.json` : "";
+  if (!machineId) {
+    return {
+      synced: false,
+      key,
+      record: null,
+      verification: verificationFailure("invalid_machine_id", "机器码格式无效", { machine_id: machineIdParam }),
+    };
+  }
+  if (!env.ACCOUNT_WHITELIST_BUCKET) {
+    return {
+      synced: false,
+      key,
+      record: null,
+      verification: verificationFailure(
+        "r2_binding_missing",
+        "R2 binding ACCOUNT_WHITELIST_BUCKET 未配置",
+        { machine_id: machineId, key },
+      ),
+    };
+  }
+
+  const machine = await getMachine(env, machineId);
+  if (!machine) {
+    return {
+      synced: false,
+      key,
+      record: null,
+      verification: verificationFailure("machine_not_found", "Machine not found", { machine_id: machineId, key }),
+    };
+  }
+
+  const syncedAt = nowIso();
+  const record = whitelistRecord(machine, syncedAt);
+  try {
+    await env.ACCOUNT_WHITELIST_BUCKET.put(key, JSON.stringify(record, null, 2) + "\n", {
+      httpMetadata: {
+        contentType: "application/json; charset=utf-8",
+        cacheControl: "no-store, max-age=0",
+      },
+    });
+    await env.DB.prepare(
+      "UPDATE machines SET last_synced_at = ?, updated_at = ? WHERE machine_id = ?",
+    ).bind(syncedAt, syncedAt, machineId).run();
+    await audit(env, "r2.sync", machineId, { key });
+  } catch (error) {
+    return {
+      synced: false,
+      key,
+      record,
+      verification: verificationFailure(
+        "r2_write_failed",
+        `R2 写入失败：${error?.message || String(error)}`,
+        { machine_id: machineId, key },
+      ),
+    };
+  }
+
+  const verification = await verifyPublicWhitelist(env, machineId);
+  return { synced: true, key, record, verification };
+}
+
+function verificationFailure(status, message, extra = {}) {
+  return {
+    ok: false,
+    status,
+    message,
+    checked_at: nowIso(),
+    ...extra,
+  };
+}
+
+function publicWhitelistUrl(env, machineId) {
   const base = String(env.ACCOUNT_WHITELIST_PUBLIC_BASE_URL || "").replace(/\/+$/, "");
-  if (!base) return json({ ok: false, message: "ACCOUNT_WHITELIST_PUBLIC_BASE_URL is not configured" }, 500);
-  const res = await fetch(`${base}/${machineId}.json`, {
-    headers: { accept: "application/json", "user-agent": "jianada-license-admin/1.0" },
-  });
-  if (!res.ok) return json({ ok: false, message: `R2 returned HTTP ${res.status}` }, 404);
-  const record = await res.json();
-  return json({ ok: true, record });
+  return base ? `${base}/${machineId}.json` : "";
+}
+
+async function verifyPublicWhitelist(env, machineIdParam) {
+  const machineId = normalizeMachineId(machineIdParam);
+  if (!machineId) {
+    return verificationFailure("invalid_machine_id", "机器码格式无效", { machine_id: machineIdParam });
+  }
+  const publicUrl = publicWhitelistUrl(env, machineId);
+  if (!publicUrl) {
+    return verificationFailure("public_url_missing", "公开 R2 URL 未配置", { machine_id: machineId });
+  }
+
+  let response;
+  let text = "";
+  try {
+    response = await fetch(publicUrl, {
+      headers: {
+        accept: "application/json",
+        "cache-control": "no-cache",
+        "user-agent": "jianada-license-admin/1.0",
+      },
+      cf: { cacheTtl: 0 },
+    });
+    text = await response.text();
+  } catch (error) {
+    return verificationFailure(
+      "network_error",
+      `公开 R2 读取失败：${error?.message || String(error)}`,
+      { machine_id: machineId, public_url: publicUrl },
+    );
+  }
+
+  if (response.status === 404) {
+    return verificationFailure("404", "404：公开 R2 JSON 不存在", {
+      machine_id: machineId,
+      public_url: publicUrl,
+      http_status: response.status,
+    });
+  }
+  if (!response.ok) {
+    return verificationFailure("http_error", `公开 R2 返回 HTTP ${response.status}`, {
+      machine_id: machineId,
+      public_url: publicUrl,
+      http_status: response.status,
+    });
+  }
+
+  let record;
+  try {
+    record = JSON.parse(text);
+  } catch (error) {
+    return verificationFailure("json_parse_failed", `JSON 解析失败：${error?.message || String(error)}`, {
+      machine_id: machineId,
+      public_url: publicUrl,
+      http_status: response.status,
+    });
+  }
+
+  const recordMachineId = normalizeMachineId(record?.machine_id);
+  if (recordMachineId !== machineId) {
+    return verificationFailure("machine_id_mismatch", "JSON 机器码不匹配", {
+      machine_id: machineId,
+      public_url: publicUrl,
+      http_status: response.status,
+      record,
+    });
+  }
+
+  const accounts = cleanAccounts(record?.accounts || []);
+  if (record?.enabled !== true) {
+    return verificationFailure("disabled", "未启用：enabled 不是 true", {
+      machine_id: machineId,
+      public_url: publicUrl,
+      http_status: response.status,
+      record: { ...record, accounts },
+    });
+  }
+  if (!accounts.length) {
+    return verificationFailure("no_accounts", "无账号：accounts 为空", {
+      machine_id: machineId,
+      public_url: publicUrl,
+      http_status: response.status,
+      record: { ...record, accounts },
+    });
+  }
+
+  return {
+    ok: true,
+    status: "verified",
+    message: "公开 R2 已验证",
+    machine_id: machineId,
+    public_url: publicUrl,
+    http_status: response.status,
+    accounts_count: accounts.length,
+    checked_at: nowIso(),
+    record: { ...record, accounts },
+  };
 }
 
 async function getMachine(env, machineId) {
@@ -407,14 +571,14 @@ function normalizeMachineRow(row) {
   };
 }
 
-function whitelistRecord(machine) {
+function whitelistRecord(machine, updatedAt = nowIso()) {
   return {
     machine_id: machine.machine_id,
     customer_id: machine.customer_id,
     enabled: machine.enabled !== false,
     accounts: cleanAccounts(machine.accounts || []),
     remark: cleanText(machine.remark),
-    updated_at: nowIso(),
+    updated_at: updatedAt,
   };
 }
 
@@ -560,7 +724,7 @@ function cleanText(value) {
 
 function normalizeMachineId(value) {
   const mid = String(value || "").trim().toUpperCase();
-  return /^[A-Z0-9]{16}$/.test(mid) ? mid : "";
+  return /^[A-Z0-9]{16,32}$/.test(mid) ? mid : "";
 }
 
 function cleanAccounts(values) {

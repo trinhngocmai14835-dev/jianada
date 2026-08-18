@@ -9,6 +9,7 @@ const state = {
   message: "",
   generatedLicense: "",
   r2Record: "",
+  r2Checks: {},
 };
 
 const demoCustomers = [
@@ -87,6 +88,45 @@ function setMessage(message) {
   render();
 }
 
+function rememberR2(machineId, result) {
+  const verification = result?.verification || result?.r2?.verification || null;
+  if (!verification) return null;
+  state.r2Checks[machineId] = verification;
+  const record = verification.record || result?.record || null;
+  state.r2Record = record ? JSON.stringify(record, null, 2) : "";
+  return verification;
+}
+
+function r2ResultMessage(result, syncedMessage, syncFailedMessage) {
+  const verification = result?.verification || null;
+  if (!result) return `${syncedMessage}，但没有返回公开 R2 验证结果`;
+  if (result.synced === false) {
+    return `${syncFailedMessage}：${verification?.message || "未知原因"}`;
+  }
+  if (!verification) return `${syncedMessage}，但没有返回公开 R2 验证结果`;
+  return verification.ok
+    ? `${syncedMessage}，公开 R2 已验证`
+    : `${syncedMessage}，公开 R2 验证失败：${verification.message || "未知原因"}`;
+}
+
+function renderR2Status(machine) {
+  const verification = state.r2Checks[machine.machine_id];
+  if (verification?.ok) {
+    const time = verification.checked_at ? ` · ${shortTime(verification.checked_at)}` : "";
+    return `<div class="muted small">R2：<span class="tag ok">公开 R2 已验证</span>${time}</div>`;
+  }
+  if (verification) {
+    return `<div class="muted small">R2：<span class="tag off">${escapeHtml(verification.message || "公开 R2 验证失败")}</span></div>`;
+  }
+  if (machine.last_synced_at) {
+    return `<div class="muted small">R2：上次同步 ${escapeHtml(shortTime(machine.last_synced_at))}，还未公开验证</div>`;
+  }
+  return `<div class="muted small">R2：未同步验证</div>`;
+}
+
+function shortTime(value) {
+  return String(value || "").replace("T", " ").slice(0, 19);
+}
 function expiryDisplay(expiry) {
   const raw = String(expiry || "");
   if (!/^\d{8}$/.test(raw)) return "未设置";
@@ -224,7 +264,7 @@ function renderCustomerDetail(customer) {
     ` : ""}
     ${state.r2Record ? `
       <div style="height:14px"></div>
-      <strong>当前 R2 JSON</strong>
+      <strong>公开 R2 实际 JSON</strong>
       <pre class="code">${escapeHtml(state.r2Record)}</pre>
     ` : ""}
   `;
@@ -244,6 +284,7 @@ function renderMachineCard(machine) {
         </div>
         <span class="tag ${machine.enabled ? "ok" : "off"}">${machine.enabled ? "启用" : "停用"}</span>
       </div>
+      ${renderR2Status(machine)}
       <form class="machine-form form-grid" data-machine="${machine.machine_id}">
         <label>到期日期<input name="expiry" type="date" value="${escapeAttr(dateValue)}"></label>
         <label>状态
@@ -258,7 +299,7 @@ function renderMachineCard(machine) {
           <button class="btn primary" type="submit">保存机器码</button>
           <button class="btn" type="button" data-action="license" data-machine="${machine.machine_id}">生成授权码</button>
           <button class="btn" type="button" data-action="sync-r2" data-machine="${machine.machine_id}">同步到 R2</button>
-          <button class="btn" type="button" data-action="view-r2" data-machine="${machine.machine_id}">查看 R2 JSON</button>
+          <button class="btn" type="button" data-action="view-r2" data-machine="${machine.machine_id}">验证公开 R2</button>
         </div>
       </form>
     </div>
@@ -314,9 +355,10 @@ document.addEventListener("submit", async (event) => {
       return;
     }
     try {
-      await api(`/api/machines/${machineId}`, { method: "PUT", body: JSON.stringify(payload) });
+      const data = await api(`/api/machines/${machineId}`, { method: "PUT", body: JSON.stringify(payload) });
+      rememberR2(machineId, data.r2);
       await loadCustomers();
-      setMessage("机器码已保存");
+      setMessage(r2ResultMessage(data.r2, "机器码已保存并已同步 R2", "机器码已保存，但同步 R2 失败"));
     } catch (error) {
       setMessage(error.message);
     }
@@ -365,7 +407,7 @@ document.addEventListener("click", async (event) => {
 
   if (action === "add-machine") {
     const customer = selectedCustomer();
-    const machineId = prompt("输入 16 位机器码");
+    const machineId = prompt("输入机器码");
     if (!machineId) return;
     if (state.demo) {
       customer.machines.unshift({
@@ -417,9 +459,10 @@ document.addEventListener("click", async (event) => {
       return;
     }
     try {
-      await api(`/api/machines/${machineId}/sync-r2`, { method: "POST", body: "{}" });
+      const data = await api(`/api/machines/${machineId}/sync-r2`, { method: "POST", body: "{}" });
+      rememberR2(machineId, data);
       await loadCustomers();
-      setMessage("白名单已同步到 R2");
+      setMessage(r2ResultMessage(data, "白名单已同步到 R2", "白名单同步 R2 失败"));
     } catch (error) {
       setMessage(error.message);
     }
@@ -442,8 +485,8 @@ document.addEventListener("click", async (event) => {
     }
     try {
       const data = await api(`/api/machines/${machineId}/r2`);
-      state.r2Record = JSON.stringify(data.record, null, 2);
-      render();
+      const verification = rememberR2(machineId, data);
+      setMessage(verification?.message || "公开 R2 已验证");
     } catch (error) {
       setMessage(error.message);
     }
