@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import {
   Card, Form, Input, InputNumber, Button, Space, Typography, Divider,
-  Row, Col, message, Tag, Collapse, Radio, Modal,
+  Row, Col, message, Tag, Collapse, Radio, Modal, Switch,
 } from 'antd'
 import { PlusOutlined, MinusCircleOutlined, PlayCircleOutlined, PauseCircleOutlined } from '@ant-design/icons'
 import { api } from '../api/client'
@@ -39,7 +39,11 @@ function cfgToForm(cfg) {
   }))
   // 补齐三路
   while (ns.length < 3) ns.push({ set_a: '0,1,3,5,8', set_b: '2,4,6,7,9' })
-  return { ...cfg, number_sets: ns }
+  const enabledPositions = Array.from(
+    { length: 3 },
+    (_, i) => (cfg.enabled_positions || [true, true, true])[i] !== false,
+  )
+  return { ...cfg, number_sets: ns, enabled_positions: enabledPositions }
 }
 
 // 把表单字符串 "0,1,3,5,8" 转回数组，过滤非法字符
@@ -52,9 +56,17 @@ function parseNums(str) {
     .filter((n) => !Number.isNaN(n) && n >= 0 && n <= 9)
 }
 
+function normalizeEnabledPositions(vals) {
+  return Array.from(
+    { length: 3 },
+    (_, i) => (vals.enabled_positions || [true, true, true])[i] !== false,
+  )
+}
+
 function formToCfg(vals) {
   return {
     ...vals,
+    enabled_positions: normalizeEnabledPositions(vals),
     number_sets: (vals.number_sets || []).map((s) => ({
       set_a: parseNums(s.set_a),
       set_b: parseNums(s.set_b),
@@ -84,8 +96,13 @@ export default function RotateBetPage() {
   const handleSave = async () => {
     try {
       const vals = await form.validateFields()
+      const cfg = formToCfg(vals)
+      if (!cfg.enabled_positions.some(Boolean)) {
+        message.error('至少启用一路球')
+        return false
+      }
       setSaving(true)
-      await api.saveRotateBetConfig(formToCfg(vals))
+      await api.saveRotateBetConfig(cfg)
       message.success('配置已保存')
       return true
     } catch {
@@ -304,9 +321,43 @@ export default function RotateBetPage() {
                     background: '#fff7e6', border: '1px solid #ffd591', borderRadius: 8,
                     padding: '10px 14px', marginBottom: 12, fontSize: 12, color: '#874d00',
                   }}>
-                    中了→下把仍用一阶底注（不重置把次）。未中→下把注码 = 本轮已投总额 × 追损倍率。
-                    连续未中满最大把数→重置，重新从一阶开始。
+                    启动后每一路先独立观察，达到设定的连续未中次数后才开始实投。命中→本路追损状态清零，下把回到底注。
+                    实投未中→下把注码 = 本轮已投总额 × 追损倍率；连续未中满最大把数→重置到底注。
                   </div>
+                  <Form.Item
+                    label="入场触发条件"
+                    name="entry_miss_trigger"
+                    initialValue={1}
+                    tooltip="三路球单独观察；选择直接开始则立即投注，否则某一路连续未中达到设置次数后才开始真实投注"
+                  >
+                    <Radio.Group optionType="button" buttonStyle="solid">
+                      <Radio.Button value={0}>直接开始</Radio.Button>
+                      <Radio.Button value={1}>一次不中</Radio.Button>
+                      <Radio.Button value={2}>两次不中</Radio.Button>
+                      <Radio.Button value={3}>三次不中</Radio.Button>
+                    </Radio.Group>
+                  </Form.Item>
+                  <Form.Item
+                    label="启用球路"
+                    tooltip="关闭某一路后，该路不观察、不下注、不参与追损"
+                    style={{ marginBottom: 12 }}
+                  >
+                    <Space wrap>
+                      {BALL_LABELS.map((label, i) => (
+                        <Space key={label} size={8} style={{ marginBottom: 8 }}>
+                          <Text>{label}</Text>
+                          <Form.Item
+                            name={['enabled_positions', i]}
+                            valuePropName="checked"
+                            initialValue={true}
+                            noStyle
+                          >
+                            <Switch checkedChildren="开" unCheckedChildren="关" />
+                          </Form.Item>
+                        </Space>
+                      ))}
+                    </Space>
+                  </Form.Item>
                   <Row gutter={16}>
                     <Col span={8}>
                       <Form.Item label="一阶底注 (元)" name="base_bet_amount" rules={[{ required: true }]}>

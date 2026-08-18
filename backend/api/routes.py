@@ -104,6 +104,8 @@ DEFAULT_ROTATEBET = {
         {"set_a": [0, 1, 3, 5, 8], "set_b": [2, 4, 6, 7, 9]},
     ],
     "base_bet_amount": 100,
+    "entry_miss_trigger": 1,
+    "enabled_positions": [True, True, True],
     "loss_multiplier": 1.3,
     "max_losses": 5,
     "daily_stop_loss": 29000,

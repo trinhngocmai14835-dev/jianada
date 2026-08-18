@@ -81,21 +81,40 @@ def _wait_until_start(cfg, account, stop_event, log):
 # ─── 每路状态 ─────────────────────────────────────────────────
 
 class _PathState:
-    """单路球的轮换 + 追损状态，每路完全独立。"""
+    """单路球的轮换、入场观察和追损状态，每路完全独立。"""
 
-    def __init__(self, base: int, multiplier: float, max_losses: int):
+    def __init__(self, base: int, multiplier: float, max_losses: int, entry_miss_trigger: int = 1):
         self.base = base
         self.multiplier = multiplier
         self.max_losses = max_losses
-        self.set_idx = 0          # 当前使用哪组号码（0=A组，1=B组），下注成功后翻转
-        self.loss_count = 0       # 连续未中次数（满 max_losses 后自动归零）
-        self.loss_history = []    # 本轮各把的实际下注额（用于计算追损额）
+        self.entry_miss_trigger = max(0, int(entry_miss_trigger))
+        self.active = self.entry_miss_trigger == 0
+        self.entry_loss_count = 0  # 入场前连续未中观察次数，达到 entry_miss_trigger 后开始实投
+        self.set_idx = 0           # 当前使用哪组号码（0=A组，1=B组），每期分配后翻转
+        self.loss_count = 0        # 实投后连续未中次数（满 max_losses 后自动归零）
+        self.loss_history = []     # 实投本轮各把的实际下注额（用于计算追损额）
 
     def get_bet(self) -> int:
         """计算本把应下注额。"""
         if self.loss_count == 0:
             return self.base
         return max(1, round(sum(self.loss_history) * self.multiplier))
+
+    def observe_entry(self, hit: bool) -> bool:
+        """入场观察；返回 True 表示本路刚达到触发条件。"""
+        if self.active:
+            return False
+        if hit:
+            self.entry_loss_count = 0
+            return False
+        self.entry_loss_count += 1
+        if self.entry_loss_count >= self.entry_miss_trigger:
+            self.active = True
+            self.entry_loss_count = 0
+            self.loss_count = 0
+            self.loss_history = []
+            return True
+        return False
 
     def on_win(self):
         """命中：重置追损计数，下一把回归一阶底注。"""
@@ -113,9 +132,8 @@ class _PathState:
         return False
 
     def rotate(self):
-        """翻转号码组（下注成功后调用，确保每把轮换）。"""
+        """翻转号码组，确保每期 A/B 轮换。"""
         self.set_idx ^= 1
-
 
 def _parse_number_sets(raw):
     """把前端传来的三路号码配置规整成 [(set_a, set_b), ...]。
@@ -141,6 +159,68 @@ def _parse_number_sets(raw):
     return out if len(out) == NUM_POSITIONS else None
 
 
+def _parse_entry_miss_trigger(raw):
+    """入场触发次数：0=立即实投；1/2/3=连续观察未中后实投。"""
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = 1
+    if value < 0:
+        return 1
+    return min(value, 3)
+
+
+def _parse_enabled_positions(raw):
+    if not isinstance(raw, (list, tuple)):
+        return [True] * NUM_POSITIONS
+
+    disabled_values = {"0", "false", "off", "no", "disabled", "停用", "关闭"}
+    out = []
+    for i in range(NUM_POSITIONS):
+        if i >= len(raw):
+            out.append(True)
+            continue
+        value = raw[i]
+        if isinstance(value, bool):
+            out.append(value)
+        elif isinstance(value, (int, float)):
+            out.append(value != 0)
+        elif isinstance(value, str):
+            out.append(value.strip().lower() not in disabled_values)
+        else:
+            out.append(value is not False)
+    return out
+
+
+def _observe_entry_draw(paths, number_sets, draw, account, log, targets=None, rotate_after=False, enabled_positions=None):
+    """对尚未实投的球路做入场观察；每路独立累计连续未中。"""
+    enabled_positions = enabled_positions or [True] * NUM_POSITIONS
+    activated = []
+    for i in range(NUM_POSITIONS):
+        if not enabled_positions[i]:
+            continue
+        path = paths[i]
+        if path.active:
+            continue
+        nums = list(targets[i]) if targets is not None else list(number_sets[i][path.set_idx])
+        set_label = "A" if nums == list(number_sets[i][0]) else "B"
+        hit = draw[i] in nums
+        before = path.entry_loss_count
+        ready = path.observe_entry(hit)
+
+        if hit:
+            suffix = "，观察计数清零" if before else f"，等待连续{path.entry_miss_trigger}次未中"
+            log(f"[{account}]   球{i+1} 入场观察 | 开{draw[i]}【命中】| {set_label}组{nums}{suffix}")
+        elif ready:
+            activated.append(i)
+            log(f"[{account}]   球{i+1} 入场观察 | 开{draw[i]}【未中】| {set_label}组{nums} -> 已达连续{path.entry_miss_trigger}次未中，下期开始实投")
+        else:
+            log(f"[{account}]   球{i+1} 入场观察 | 开{draw[i]}【未中】| {set_label}组{nums} -> 已累计{path.entry_loss_count}/{path.entry_miss_trigger}")
+
+        if rotate_after:
+            path.rotate()
+    return activated
+
 # ─── 下注循环 ─────────────────────────────────────────────────
 
 def _betting_loop(page, account, cfg, stop_event, log):
@@ -149,6 +229,8 @@ def _betting_loop(page, account, cfg, stop_event, log):
     BASE_BET    = int(cfg.get("base_bet_amount", 100))
     MULTIPLIER  = float(cfg.get("loss_multiplier", 1.3))
     MAX_LOSSES  = int(cfg.get("max_losses", 5))
+    ENTRY_MISSES = _parse_entry_miss_trigger(cfg.get("entry_miss_trigger", 1))
+    ENABLED_POSITIONS = _parse_enabled_positions(cfg.get("enabled_positions"))
     WIN_MIN     = int(cfg.get("bet_window_min", 20))
     WIN_MAX     = int(cfg.get("bet_window_max", 90))
     CLOSE_BUF   = int(cfg.get("close_buffer", 10))
@@ -158,7 +240,10 @@ def _betting_loop(page, account, cfg, stop_event, log):
         ([0, 1, 3, 5, 8], [2, 4, 6, 7, 9]) for _ in range(NUM_POSITIONS)
     ]
 
-    paths = [_PathState(BASE_BET, MULTIPLIER, MAX_LOSSES) for _ in range(NUM_POSITIONS)]
+    paths = [_PathState(BASE_BET, MULTIPLIER, MAX_LOSSES, ENTRY_MISSES) for _ in range(NUM_POSITIONS)]
+    if not any(ENABLED_POSITIONS):
+        log(f"[{account}] 错误：至少需要启用一路球，当前三路都已关闭")
+        return
 
     start_balance = _get_balance(page) or 0
     initial_draw = read_stable_draw(page, _get_last_draw_with_issue)
@@ -172,13 +257,16 @@ def _betting_loop(page, account, cfg, stop_event, log):
     pending_settlement = False
     last_targets = [None] * NUM_POSITIONS
     last_amounts = [BASE_BET] * NUM_POSITIONS
+    last_bet_active = [False] * NUM_POSITIONS
     last_heartbeat = 0.0
 
     sets_desc = "  ".join(
-        f"球{i+1}[A:{number_sets[i][0]} / B:{number_sets[i][1]}]"
+        f"球{i+1}[已关闭]" if not ENABLED_POSITIONS[i]
+        else f"球{i+1}[A:{number_sets[i][0]} / B:{number_sets[i][1]}]"
         for i in range(NUM_POSITIONS)
     )
-    log(f"[{account}] 轮换追损启动 | 底注={BASE_BET} 追损倍率={MULTIPLIER} 最大追损={MAX_LOSSES} | {sets_desc} | 起始余额={start_balance}")
+    trigger_desc = "立即实投" if ENTRY_MISSES == 0 else f"连续{ENTRY_MISSES}次未中后实投"
+    log(f"[{account}] 轮换追损启动 | 底注={BASE_BET} 追损倍率={MULTIPLIER} 最大追损={MAX_LOSSES} 入场={trigger_desc} | {sets_desc} | 起始余额={start_balance}")
     log(f"[{account}] 时间参数 | 下注窗口={WIN_MIN}-{WIN_MAX}秒 封盘缓冲>{CLOSE_BUF}秒 开奖延迟+{DRAW_DELAY}秒")
 
     while not stop_event.is_set():
@@ -211,6 +299,10 @@ def _betting_loop(page, account, cfg, stop_event, log):
                     log(f"[{account}] 开奖结算 | 期号={issue} 开奖={draw} | 投注锚点={pending_issue} | 当前利润={profit:+.0f}")
 
                     for i in range(NUM_POSITIONS):
+                        if not ENABLED_POSITIONS[i]:
+                            continue
+                        if not last_bet_active[i]:
+                            continue
                         amt = last_amounts[i]
                         nums = last_targets[i]
                         hit = draw[i] in nums
@@ -225,11 +317,13 @@ def _betting_loop(page, account, cfg, stop_event, log):
                                 log(f"[{account}]   球{i+1} 开{draw[i]}【未中】| 投{set_label}组{nums} | 本球注码={amt} -> 已满{MAX_LOSSES}把，重置到底注")
                             else:
                                 log(f"[{account}]   球{i+1} 开{draw[i]}【未中】| 投{set_label}组{nums} | 本球注码={amt} -> 第{paths[i].loss_count}次追损，下把注码={paths[i].get_bet()}")
+                    _observe_entry_draw(paths, number_sets, draw, account, log, targets=last_targets, rotate_after=False, enabled_positions=ENABLED_POSITIONS)
                     pending_settlement = False
                     pending_issue = None
                     last_issue = issue
             elif issue != last_issue:
                 log(f"[{account}] 观察到新开奖 | 期号={issue} 开奖={draw} | 当前利润={profit:+.0f}")
+                _observe_entry_draw(paths, number_sets, draw, account, log, rotate_after=True, enabled_positions=ENABLED_POSITIONS)
                 last_issue = issue
 
         cd = _get_countdown(page)
@@ -247,13 +341,36 @@ def _betting_loop(page, account, cfg, stop_event, log):
 
         if WIN_MIN <= cd <= WIN_MAX and not bet_placed:
             targets = [list(number_sets[i][paths[i].set_idx]) for i in range(NUM_POSITIONS)]
-            amounts = [paths[i].get_bet() for i in range(NUM_POSITIONS)]
+            active_mask = [ENABLED_POSITIONS[i] and paths[i].active for i in range(NUM_POSITIONS)]
+            amounts = [paths[i].get_bet() if active_mask[i] else 0 for i in range(NUM_POSITIONS)]
 
-            step_info = "  ".join(
-                f"球{i+1}{'A' if paths[i].set_idx==0 else 'B'}组{targets[i]}×{amounts[i]}元"
-                + (f"(第{paths[i].loss_count+1}把追损)" if paths[i].loss_count > 0 else "(底注)")
-                for i in range(NUM_POSITIONS)
-            )
+            if not any(active_mask):
+                observe_info = "  ".join(
+                    f"球{i+1}{'A' if paths[i].set_idx==0 else 'B'}组{targets[i]}(观察{paths[i].entry_loss_count}/{paths[i].entry_miss_trigger})"
+                    for i in range(NUM_POSITIONS)
+                    if ENABLED_POSITIONS[i]
+                )
+                log(f"[{account}] 入场观察中 | {observe_info} | 本期不下注")
+                bet_placed = True
+                remain = _get_countdown(page)
+                _sleep_interruptible((remain if remain > 0 else 30) + DRAW_DELAY, stop_event)
+                bet_placed = False
+                continue
+
+            step_parts = []
+            for i in range(NUM_POSITIONS):
+                if not ENABLED_POSITIONS[i]:
+                    step_parts.append(f"球{i+1}已关闭")
+                    continue
+                label = "A" if paths[i].set_idx == 0 else "B"
+                if active_mask[i]:
+                    step_parts.append(
+                        f"球{i+1}{label}组{targets[i]}×{amounts[i]}元"
+                        + (f"(第{paths[i].loss_count+1}把追损)" if paths[i].loss_count > 0 else "(底注)")
+                    )
+                else:
+                    step_parts.append(f"球{i+1}{label}组{targets[i]}(观察{paths[i].entry_loss_count}/{paths[i].entry_miss_trigger})")
+            step_info = "  ".join(step_parts)
             log(f"[{account}] 下注计划 | {step_info}")
 
             delay = random.uniform(2.0, 6.0)
@@ -276,17 +393,20 @@ def _betting_loop(page, account, cfg, stop_event, log):
                 if _get_countdown(page) <= CLOSE_BUF:
                     log(f"[{account}] 警告：已确认期号锚点，但封盘太近，取消本期")
                     continue
-                ok = _place_bet(page, targets, amounts, log, account)
+                bet_targets = [targets[i] if active_mask[i] else [] for i in range(NUM_POSITIONS)]
+                ok = _place_bet(page, bet_targets, amounts, log, account)
                 if ok:
                     bet_placed = True
                     pending_settlement = True
                     pending_issue = anchor[0]
                     last_targets = targets
                     last_amounts = amounts
-                    for p in paths:
-                        p.rotate()
+                    last_bet_active = active_mask
+                    for i, p in enumerate(paths):
+                        if ENABLED_POSITIONS[i]:
+                            p.rotate()
                     remain = _get_countdown(page)
-                    log(f"[{account}] 下注成功 | 投注锚点={pending_issue} | 只接受更大期号开奖结算 | 预计等待{remain + DRAW_DELAY}秒")
+                    log(f"[{account}] 下注成功 | 投注锚点={pending_issue} | 已实投球路={[i+1 for i, active in enumerate(active_mask) if active]} | 只接受更大期号开奖结算 | 预计等待{remain + DRAW_DELAY}秒")
                     _sleep_interruptible(remain + DRAW_DELAY, stop_event)
                     bet_placed = False
             else:

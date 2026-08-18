@@ -70,6 +70,8 @@ def test_rotate_loop_chase_after_miss():
             "base_bet_amount": 10,
             "loss_multiplier": 1.3,
             "max_losses": 4,
+            "entry_miss_trigger": 0,
+            "enabled_positions": [True, True, True],
             "bet_window_min": 20,
             "bet_window_max": 90,
             "close_buffer": 10,

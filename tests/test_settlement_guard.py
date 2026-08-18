@@ -11,7 +11,7 @@ from services.settlement_guard import (
     is_newer_issue,
     read_stable_draw,
 )
-from services.rotate_bet_svc import _PathState
+from services.rotate_bet_svc import _PathState, _observe_entry_draw, _parse_enabled_positions
 
 
 def check(cond, msg):
@@ -81,11 +81,67 @@ def test_rotate_chase_amounts():
           "hit resets chase state")
 
 
+def test_rotate_entry_trigger_state():
+    print("[4] rotate entry trigger state")
+    path = _PathState(base=100, multiplier=1.3, max_losses=5, entry_miss_trigger=2)
+    check(path.active is False, "entry trigger starts inactive")
+    check(path.observe_entry(False) is False and path.entry_loss_count == 1 and not path.active,
+          "first observed miss waits")
+    check(path.observe_entry(True) is False and path.entry_loss_count == 0 and not path.active,
+          "observed hit resets entry count")
+    path.observe_entry(False)
+    check(path.observe_entry(False) is True and path.active,
+          "second consecutive observed miss activates path")
+
+    immediate = _PathState(base=100, multiplier=1.3, max_losses=5, entry_miss_trigger=0)
+    check(immediate.active is True, "zero trigger keeps immediate betting compatibility")
+
+
+def test_rotate_entry_observation_per_path():
+    print("[5] rotate entry observation per path")
+    number_sets = [([0, 1, 3, 5, 8], [2, 4, 6, 7, 9]) for _ in range(3)]
+    paths = [_PathState(base=100, multiplier=1.3, max_losses=5, entry_miss_trigger=2) for _ in range(3)]
+    logs = []
+
+    activated = _observe_entry_draw(paths, number_sets, [2, 2, 0], "acct", logs.append, rotate_after=True)
+    check(activated == [], "first observation activates no path")
+    check([p.entry_loss_count for p in paths] == [1, 1, 0], "entry counts are independent")
+    check([p.set_idx for p in paths] == [1, 1, 1], "observation rotates all inactive paths")
+
+    activated = _observe_entry_draw(paths, number_sets, [0, 2, 0], "acct", logs.append, rotate_after=True)
+    check(activated == [0], "only first path activates after second miss")
+    check([p.active for p in paths] == [True, False, False], "only triggered path becomes active")
+    check(paths[1].entry_loss_count == 0 and paths[2].entry_loss_count == 1,
+          "other paths keep independent observation state")
+
+def test_rotate_disabled_position_skips_observation():
+    print("[6] rotate disabled position skips observation")
+    number_sets = [([0, 1, 3, 5, 8], [2, 4, 6, 7, 9]) for _ in range(3)]
+    paths = [_PathState(base=100, multiplier=1.3, max_losses=5, entry_miss_trigger=1) for _ in range(3)]
+    logs = []
+
+    enabled = _parse_enabled_positions([True, False, True])
+    activated = _observe_entry_draw(
+        paths,
+        number_sets,
+        [2, 2, 2],
+        "acct",
+        logs.append,
+        rotate_after=True,
+        enabled_positions=enabled,
+    )
+
+    check(enabled == [True, False, True], "enabled positions parser keeps selected paths")
+    check(activated == [0, 2], "disabled middle path does not activate")
+    check(paths[1].active is False and paths[1].entry_loss_count == 0,
+          "disabled path keeps inactive observation state")
+    check([p.set_idx for p in paths] == [1, 0, 1], "only enabled paths rotate during observation")
+
 def main():
     print("=" * 56)
     print("settlement guard tests")
     print("=" * 56)
-    for fn in [test_issue_compare, test_stable_draw_reader, test_rotate_chase_amounts]:
+    for fn in [test_issue_compare, test_stable_draw_reader, test_rotate_chase_amounts, test_rotate_entry_trigger_state, test_rotate_entry_observation_per_path, test_rotate_disabled_position_skips_observation]:
         fn()
     print("=" * 56)
     print("ALL OK")
