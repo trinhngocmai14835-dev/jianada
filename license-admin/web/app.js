@@ -39,6 +39,16 @@ async function api(path, options = {}) {
     ...options,
   });
   const data = await res.json().catch(() => ({}));
+  if (res.status === 401 && path !== "/api/login") {
+    state.authenticated = false;
+    state.customers = [];
+    state.selectedId = "";
+    state.message = data.message === "Login required"
+      ? "\u767b\u5f55\u5df2\u8fc7\u671f\uff0c\u8bf7\u91cd\u65b0\u767b\u5f55"
+      : data.message || "\u767b\u5f55\u5df2\u8fc7\u671f\uff0c\u8bf7\u91cd\u65b0\u767b\u5f55";
+    render();
+    throw new Error(state.message);
+  }
   if (!res.ok || data.ok === false) throw new Error(data.message || `HTTP ${res.status}`);
   return data;
 }
