@@ -6,6 +6,7 @@ keeps a last-good cache, and every task start checks configured login accounts.
 import json
 import os
 import ssl
+import sys
 import urllib.error
 import urllib.request
 from datetime import datetime
@@ -26,10 +27,49 @@ ACCOUNT_WHITELIST_BASE_URL = os.getenv(
 CACHE_KEY = "account_whitelist_cache"
 HTTP_TIMEOUT = 8
 
+def _certifi_cafile():
+    candidates = []
+
+    if certifi is not None:
+        where = getattr(certifi, "where", None)
+        if callable(where):
+            try:
+                candidates.append(where())
+            except Exception:
+                pass
+
+        try:
+            from certifi import core as certifi_core
+            core_where = getattr(certifi_core, "where", None)
+            if callable(core_where):
+                candidates.append(core_where())
+        except Exception:
+            pass
+
+        module_file = getattr(certifi, "__file__", "")
+        if module_file:
+            module_dir = os.path.dirname(module_file)
+            candidates.append(os.path.join(module_dir, "cacert.pem"))
+
+    for base in [getattr(sys, "_MEIPASS", ""), os.path.dirname(sys.executable), os.getcwd()]:
+        if base:
+            candidates.extend([
+                os.path.join(base, "certifi", "cacert.pem"),
+                os.path.join(base, "_internal", "certifi", "cacert.pem"),
+                os.path.join(base, "cacert.pem"),
+            ])
+
+    for path in candidates:
+        if path and os.path.exists(path):
+            return path
+    return None
+
+
 def _ssl_context():
-    if certifi is None:
-        return ssl.create_default_context()
-    return ssl.create_default_context(cafile=certifi.where())
+    cafile = _certifi_cafile()
+    if cafile:
+        return ssl.create_default_context(cafile=cafile)
+    return ssl.create_default_context()
 
 def normalize_account(value) -> str:
     return str(value or "").strip().lower()
