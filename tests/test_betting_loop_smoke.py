@@ -93,6 +93,58 @@ def test_rotate_loop_chase_after_miss():
     check(any("未中" in m and "下把注码=13" in m for m in logs), "miss log shows next chase amount")
 
 
+def test_rotate_late_window_bets_immediately():
+    print("[2] rotate late window bets immediately")
+    stop = threading.Event()
+    calls = []
+    logs = []
+
+    old = {
+        "balance": rotate._get_balance,
+        "countdown": rotate._get_countdown,
+        "draw": rotate._get_last_draw_with_issue,
+        "place": rotate._place_bet,
+        "sleep_interruptible": rotate._sleep_interruptible,
+        "sleep": rotate.time.sleep,
+    }
+
+    try:
+        rotate._get_balance = lambda page: 1000
+        rotate._get_countdown = lambda page: 5
+        rotate._get_last_draw_with_issue = lambda page: ("300", [0, 0, 0])
+        rotate._sleep_interruptible = lambda seconds, stop_event: None
+        rotate.time.sleep = lambda seconds: None
+
+        def fake_place(page, targets, amounts, log, account):
+            calls.append((targets, amounts))
+            stop.set()
+            return True
+
+        rotate._place_bet = fake_place
+        rotate._betting_loop(FakePage(), "acct", {
+            "base_bet_amount": 10,
+            "loss_multiplier": 1.3,
+            "max_losses": 4,
+            "entry_miss_trigger": 0,
+            "enabled_positions": [True, True, True],
+            "bet_window_min": 20,
+            "bet_window_max": 90,
+            "close_buffer": 10,
+            "draw_delay": 73,
+            "daily_stop_loss": 999999,
+            "take_profit": 999999,
+        }, stop, lambda msg: logs.append(msg))
+    finally:
+        rotate._get_balance = old["balance"]
+        rotate._get_countdown = old["countdown"]
+        rotate._get_last_draw_with_issue = old["draw"]
+        rotate._place_bet = old["place"]
+        rotate._sleep_interruptible = old["sleep_interruptible"]
+        rotate.time.sleep = old["sleep"]
+
+    check(len(calls) == 1, "no close buffer still attempts late bet")
+    check(any("立即下注" in m for m in logs), "late window does not wait random delay")
+
 def test_fixed_rush_virtual_then_real_inherits_step():
     print("[2] fixed rush virtual trigger then real bet")
     stop = threading.Event()
@@ -172,7 +224,7 @@ def main():
     print("=" * 56)
     print("betting loop smoke tests")
     print("=" * 56)
-    for fn in [test_rotate_loop_chase_after_miss, test_fixed_rush_virtual_then_real_inherits_step]:
+    for fn in [test_rotate_loop_chase_after_miss, test_rotate_late_window_bets_immediately, test_fixed_rush_virtual_then_real_inherits_step]:
         fn()
     print("=" * 56)
     print("ALL OK")

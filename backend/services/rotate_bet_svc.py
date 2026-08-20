@@ -237,6 +237,7 @@ def _betting_loop(page, account, cfg, stop_event, log):
     WIN_MAX     = int(cfg.get("bet_window_max", 90))
     CLOSE_BUF   = int(cfg.get("close_buffer", 10))
     DRAW_DELAY  = int(cfg.get("draw_delay", 73))
+    SETTLE_EARLY = max(0, int(cfg.get("settlement_wake_early", 8)))
 
     number_sets = _parse_number_sets(cfg.get("number_sets")) or [
         ([0, 1, 3, 5, 8], [2, 4, 6, 7, 9]) for _ in range(NUM_POSITIONS)
@@ -269,7 +270,7 @@ def _betting_loop(page, account, cfg, stop_event, log):
     )
     trigger_desc = "立即实投" if ENTRY_MISSES == 0 else f"连续{ENTRY_MISSES}次未中后实投"
     log(f"[{account}] 轮换追损启动 | 底注={BASE_BET} 追损倍率={MULTIPLIER} 最大追损={MAX_LOSSES} 入场={trigger_desc} | {sets_desc} | 起始余额={start_balance}")
-    log(f"[{account}] 时间参数 | 下注窗口={WIN_MIN}-{WIN_MAX}秒 封盘缓冲>{CLOSE_BUF}秒 开奖延迟+{DRAW_DELAY}秒")
+    log(f"[{account}] 时间参数 | 下注窗口<= {WIN_MAX}秒 无最低安全线/无封盘缓冲 开奖延迟+{DRAW_DELAY}秒 提前轮询结算={SETTLE_EARLY}秒")
 
     while not stop_event.is_set():
         bal = _get_balance(page)
@@ -342,10 +343,10 @@ def _betting_loop(page, account, cfg, stop_event, log):
             if now - last_heartbeat >= 30:
                 log(f"[{account}] 等待开奖结算 | 投注锚点={pending_issue}，结算前不会继续下注 | 倒计时={cd}秒")
                 last_heartbeat = now
-            time.sleep(2)
+            time.sleep(0.5 if cd <= WIN_MAX else 1.0)
             continue
 
-        if WIN_MIN <= cd <= WIN_MAX and not bet_placed:
+        if 0 <= cd <= WIN_MAX and not bet_placed:
             targets = [list(number_sets[i][paths[i].set_idx]) for i in range(NUM_POSITIONS)]
             active_mask = [ENABLED_POSITIONS[i] and paths[i].active for i in range(NUM_POSITIONS)]
             amounts = [paths[i].get_bet() if active_mask[i] else 0 for i in range(NUM_POSITIONS)]
@@ -379,44 +380,37 @@ def _betting_loop(page, account, cfg, stop_event, log):
             step_info = "  ".join(step_parts)
             log(f"[{account}] 下注计划 | {step_info}")
 
-            delay = random.uniform(2.0, 6.0)
-            log(f"[{account}] 距封盘{cd}秒，延时{delay:.1f}秒后下注...")
-            time.sleep(delay)
+            log(f"[{account}] 距封盘{cd}秒，立即下注...")
 
             if stop_event.is_set():
                 break
 
-            if _get_countdown(page) > CLOSE_BUF:
-                anchor = read_stable_draw(page, _get_last_draw_with_issue)
-                if not anchor:
-                    log(f"[{account}] 警告：无法稳定读取投注锚点期号，跳过本期，避免错期结算")
-                    bet_placed = True
-                    remain = _get_countdown(page)
-                    _sleep_interruptible((remain if remain > 0 else 30) + DRAW_DELAY, stop_event)
-                    bet_placed = False
-                    continue
-                last_issue = anchor[0]
-                if _get_countdown(page) <= CLOSE_BUF:
-                    log(f"[{account}] 警告：已确认期号锚点，但封盘太近，取消本期")
-                    continue
-                bet_targets = [targets[i] if active_mask[i] else [] for i in range(NUM_POSITIONS)]
-                ok = _place_bet(page, bet_targets, amounts, log, account)
-                if ok:
-                    bet_placed = True
-                    pending_settlement = True
-                    pending_issue = anchor[0]
-                    last_targets = targets
-                    last_amounts = amounts
-                    last_bet_active = active_mask
-                    for i, p in enumerate(paths):
-                        if ENABLED_POSITIONS[i]:
-                            p.rotate()
-                    remain = _get_countdown(page)
-                    log(f"[{account}] 下注成功 | 投注锚点={pending_issue} | 已实投球路={[i+1 for i, active in enumerate(active_mask) if active]} | 只接受更大期号开奖结算 | 预计等待{remain + DRAW_DELAY}秒")
-                    _sleep_interruptible(remain + DRAW_DELAY, stop_event)
-                    bet_placed = False
-            else:
-                log(f"[{account}] 封盘太近，取消本期")
+            anchor = read_stable_draw(page, _get_last_draw_with_issue)
+            if not anchor:
+                log(f"[{account}] 警告：无法稳定读取投注锚点期号，跳过本期，避免错期结算")
+                bet_placed = True
+                remain = _get_countdown(page)
+                _sleep_interruptible((remain if remain > 0 else 30) + DRAW_DELAY, stop_event)
+                bet_placed = False
+                continue
+            last_issue = anchor[0]
+            bet_targets = [targets[i] if active_mask[i] else [] for i in range(NUM_POSITIONS)]
+            ok = _place_bet(page, bet_targets, amounts, log, account)
+            if ok:
+                bet_placed = True
+                pending_settlement = True
+                pending_issue = anchor[0]
+                last_targets = targets
+                last_amounts = amounts
+                last_bet_active = active_mask
+                for i, p in enumerate(paths):
+                    if ENABLED_POSITIONS[i]:
+                        p.rotate()
+                remain = _get_countdown(page)
+                wait_seconds = max(0, remain) + max(0, DRAW_DELAY - SETTLE_EARLY)
+                log(f"[{account}] 下注成功 | 投注锚点={pending_issue} | 已实投球路={[i+1 for i, active in enumerate(active_mask) if active]} | 只接受更大期号开奖结算 | 预计{wait_seconds}秒后开始轮询结算")
+                _sleep_interruptible(wait_seconds, stop_event)
+                bet_placed = False
         else:
             now = time.time()
             if now - last_heartbeat >= 30:

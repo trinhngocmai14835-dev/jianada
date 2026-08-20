@@ -112,9 +112,9 @@ DEFAULT_ROTATEBET = {
     "take_profit": 25000,
     "start_mode": "now",
     "start_time": "09:00",
-    "bet_window_min": 20,
+    "bet_window_min": 0,
     "bet_window_max": 90,
-    "close_buffer": 10,
+    "close_buffer": 0,
     "draw_delay": 73,
 }
 

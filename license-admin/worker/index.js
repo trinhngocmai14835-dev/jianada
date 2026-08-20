@@ -289,6 +289,25 @@ async function addMachine(request, env, customerId) {
   const body = await readJson(request);
   const machineId = normalizeMachineId(body.machine_id);
   if (!machineId) return json({ ok: false, message: "Machine ID must be 16-32 alphanumeric characters" }, 400);
+
+  const existing = await env.DB.prepare(
+    `SELECT m.machine_id, m.customer_id, c.name AS customer_name
+     FROM machines m
+     LEFT JOIN customers c ON c.id = m.customer_id
+     WHERE m.machine_id = ?`,
+  ).bind(machineId).first();
+  if (existing) {
+    const owner = existing.customer_id === customerId
+      ? "当前客户"
+      : `客户「${existing.customer_name || existing.customer_id}」`;
+    return json({
+      ok: false,
+      message: `机器码 ${machineId} 已绑定到${owner}，不能重复绑定`,
+      machine_id: machineId,
+      customer_id: existing.customer_id,
+    }, 409);
+  }
+
   const now = nowIso();
   await env.DB.prepare(
     `INSERT INTO machines (
