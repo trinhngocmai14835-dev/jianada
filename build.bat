@@ -87,6 +87,7 @@ pyinstaller ^
   --hidden-import "core.db" ^
   --hidden-import "core.license" ^
   --hidden-import "core.task_manager" ^
+  --hidden-import "core.version" ^
   --hidden-import "services" ^
   --hidden-import "services.auto_bet_svc" ^
   --hidden-import "services.follow_bet_svc" ^
@@ -95,6 +96,7 @@ pyinstaller ^
   --hidden-import "services.rotate_bet_svc" ^
   --hidden-import "services.settlement_guard" ^
   --hidden-import "services.account_whitelist" ^
+  --hidden-import "services.updater" ^
   --paths "%~dp0backend\obf_build" ^
   "%MAIN_PY%"
 if errorlevel 1 (echo 打包失败 & exit /b 1)

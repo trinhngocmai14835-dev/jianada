@@ -12,8 +12,22 @@ from services.rush_bet_svc import run as rush_bet_run
 from services.pick_bet_svc import run as pick_bet_run
 from services.rotate_bet_svc import run as rotate_bet_run
 from services.account_whitelist import get_account_whitelist_status, check_accounts_allowed
+from services.updater import check_for_update, prepare_update_install
 
 router = APIRouter()
+
+TASK_LABELS = {
+    "autobet": "自动下注",
+    "rushbet": "赢冲输缩",
+    "pickbet": "自选助赢冲",
+    "followbet": "多账号跟投",
+    "rotatebet": "轮换追损",
+}
+
+
+def _task_statuses():
+    tm = TaskManager.get()
+    return {task_id: tm.status(task_id) for task_id in TASK_LABELS}
 
 # ── 默认配置 ──────────────────────────────────────────────────
 
@@ -303,15 +317,26 @@ def save_rotatebet_config(data: dict):
 
 @router.get("/status")
 def get_status():
-    tm = TaskManager.get()
-    return {
-        "autobet": tm.status("autobet"),
-        "rushbet": tm.status("rushbet"),
-        "pickbet": tm.status("pickbet"),
-        "followbet": tm.status("followbet"),
-        "rotatebet": tm.status("rotatebet"),
-    }
+    return _task_statuses()
 
+
+@router.get("/update/check")
+def api_update_check():
+    return check_for_update()
+
+
+@router.post("/update/install")
+def api_update_install():
+    statuses = _task_statuses()
+    active = [TASK_LABELS[k] for k, v in statuses.items() if v != "stopped"]
+    if active:
+        return {
+            "ok": False,
+            "message": "请先停止所有投注任务，再执行更新",
+            "active_tasks": active,
+            "statuses": statuses,
+        }
+    return prepare_update_install()
 
 @router.post("/autobet/start")
 def start_autobet():

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { Card, Row, Col, Tag, Button, Space, Typography, Statistic, Alert } from 'antd'
 import { PlayCircleOutlined, PauseCircleOutlined, ThunderboltOutlined, FireOutlined, AimOutlined, TeamOutlined } from '@ant-design/icons'
 import { api } from '../api/client'
+import UpdateNotice from '../components/UpdateNotice'
 
 const { Title, Text } = Typography
 
@@ -54,6 +55,8 @@ export default function Dashboard({ licenseInfo }) {
   return (
     <div style={{ padding: 24 }}>
       <Title level={4} style={{ marginBottom: 24 }}>控制台</Title>
+
+      <UpdateNotice />
 
       {licenseInfo?.valid && expiry && daysLeft <= 7 && (
         <Alert
