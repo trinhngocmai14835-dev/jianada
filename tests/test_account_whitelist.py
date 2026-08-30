@@ -86,7 +86,7 @@ def test_missing_r2_object_is_empty_whitelist():
     print("[3] R2 missing object handling")
     original_urlopen = aw.urllib.request.urlopen
 
-    def raise_403(req, timeout):
+    def raise_403(req, timeout=None, **_kwargs):
         url = getattr(req, "full_url", "")
         raise aw.urllib.error.HTTPError(url, 403, "Forbidden", None, None)
 
