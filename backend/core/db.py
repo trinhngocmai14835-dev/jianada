@@ -101,8 +101,9 @@ def add_flow(mode: str, account: str, msg: str, ts: str = None):
 
 
 def get_flow(account: str = None, mode: str = None, limit: int = 800):
-    q = "SELECT id, ts, mode, account, msg FROM bet_flow WHERE 1=1"
-    args = []
+    q = ("SELECT id, ts, mode, account, msg FROM bet_flow "
+         "WHERE account != ? AND msg NOT LIKE ? AND msg NOT LIKE ? AND msg NOT LIKE ?")
+    args = ["审计", "%等待开奖结算%", "%等待下注窗口%", "%观察到新开奖%"]
     if account:
         q += " AND account = ?"; args.append(account)
     if mode:
@@ -118,6 +119,9 @@ def flow_accounts():
     with _conn() as c:
         rows = c.execute(
             "SELECT account, COUNT(*) FROM bet_flow WHERE account != '' "
+            "AND account != '审计' AND msg NOT LIKE '%等待开奖结算%' "
+            "AND msg NOT LIKE '%等待下注窗口%' "
+            "AND msg NOT LIKE '%观察到新开奖%' "
             "GROUP BY account ORDER BY MAX(id) DESC"
         ).fetchall()
     return [{"account": r[0], "count": r[1]} for r in rows]

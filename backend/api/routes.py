@@ -12,7 +12,7 @@ from services.rush_bet_svc import run as rush_bet_run
 from services.pick_bet_svc import run as pick_bet_run
 from services.rotate_bet_svc import run as rotate_bet_run
 from services.account_whitelist import get_account_whitelist_status, check_accounts_allowed
-from services.updater import check_for_update, prepare_update_install
+from services.updater import check_for_update, get_update_install_status, start_update_install
 
 router = APIRouter()
 
@@ -28,6 +28,20 @@ TASK_LABELS = {
 def _task_statuses():
     tm = TaskManager.get()
     return {task_id: tm.status(task_id) for task_id in TASK_LABELS}
+
+
+def _normalize_start_config(cfg: dict, default_time: str = "08:00") -> dict:
+    out = dict(cfg or {})
+    out["start_mode"] = "scheduled" if out.get("start_mode") == "scheduled" else "now"
+    raw_time = str(out.get("start_time") or default_time).strip()
+    try:
+        h, m = [int(x) for x in raw_time.split(":", 1)]
+        if not (0 <= h <= 23 and 0 <= m <= 59):
+            raise ValueError
+        out["start_time"] = f"{h:02d}:{m:02d}"
+    except Exception:
+        out["start_time"] = default_time
+    return out
 
 # ── 默认配置 ──────────────────────────────────────────────────
 
@@ -218,13 +232,14 @@ def debug_queue(task_id: str):
 @router.get("/config/rushbet")
 def get_rushbet_config():
     # 合并默认值：老客户已保存的配置可能缺少新增字段（档位/阈值/休眠），用默认补齐
-    return {**DEFAULT_RUSHBET, **get_config("rushbet_config", {})}
+    return _normalize_start_config({**DEFAULT_RUSHBET, **get_config("rushbet_config", {})}, DEFAULT_RUSHBET["start_time"])
 
 
 @router.post("/config/rushbet")
 def save_rushbet_config(data: dict):
     existing = get_config("rushbet_config", DEFAULT_RUSHBET)
     existing.update(data)
+    existing = _normalize_start_config(existing, DEFAULT_RUSHBET["start_time"])
     set_config("rushbet_config", existing)
     return {"ok": True}
 
@@ -304,13 +319,14 @@ def _check_license():
 
 @router.get("/config/rotatebet")
 def get_rotatebet_config():
-    return {**DEFAULT_ROTATEBET, **get_config("rotatebet_config", {})}
+    return _normalize_start_config({**DEFAULT_ROTATEBET, **get_config("rotatebet_config", {})}, DEFAULT_ROTATEBET["start_time"])
 
 
 @router.post("/config/rotatebet")
 def save_rotatebet_config(data: dict):
     existing = get_config("rotatebet_config", DEFAULT_ROTATEBET)
     existing.update(data)
+    existing = _normalize_start_config(existing, DEFAULT_ROTATEBET["start_time"])
     set_config("rotatebet_config", existing)
     return {"ok": True}
 
@@ -325,6 +341,11 @@ def api_update_check():
     return check_for_update()
 
 
+@router.get("/update/status")
+def api_update_status():
+    return get_update_install_status()
+
+
 @router.post("/update/install")
 def api_update_install():
     statuses = _task_statuses()
@@ -336,7 +357,7 @@ def api_update_install():
             "active_tasks": active,
             "statuses": statuses,
         }
-    return prepare_update_install()
+    return start_update_install()
 
 @router.post("/autobet/start")
 def start_autobet():
@@ -362,7 +383,7 @@ def start_rushbet():
     ok, msg = _check_license()
     if not ok:
         return {"ok": False, "message": msg}
-    cfg = {**DEFAULT_RUSHBET, **get_config("rushbet_config", {})}
+    cfg = _normalize_start_config({**DEFAULT_RUSHBET, **get_config("rushbet_config", {})}, DEFAULT_RUSHBET["start_time"])
     ok, msg = _check_account_whitelist("rushbet", cfg)
     if not ok:
         return {"ok": False, "message": msg}
@@ -400,7 +421,7 @@ def start_rotatebet():
     ok, msg = _check_license()
     if not ok:
         return {"ok": False, "message": msg}
-    cfg = {**DEFAULT_ROTATEBET, **get_config("rotatebet_config", {})}
+    cfg = _normalize_start_config({**DEFAULT_ROTATEBET, **get_config("rotatebet_config", {})}, DEFAULT_ROTATEBET["start_time"])
     ok, msg = _check_account_whitelist("rotatebet", cfg)
     if not ok:
         return {"ok": False, "message": msg}

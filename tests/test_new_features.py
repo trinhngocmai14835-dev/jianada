@@ -109,16 +109,20 @@ def test_persist_flow_filter():
     ws._persist_flow("followbet", {"msg": "    ✅ [sxwd02] 1.0倍 跟客户5注 [b1:700/700]", "time": "12:00:00"})
     ws._persist_flow("rushbet", {"msg": "[ab99] 📊 开奖: [4, 6, 3] | 利润: +1200", "time": "12:00:01"})
     ws._persist_flow("autobet", {"msg": "[df788] 登录完成，当前页: .../Home/Index", "time": "12:00:02"})
+    ws._persist_flow("rushbet", {"msg": "[ab99] 本期选号 | 实投下注 | 投注锚点=123 | 球1:一阶底注 0,1,2,3 x 50", "time": "12:00:03"})
+    ws._persist_flow("rushbet", {"msg": "[ab99]   本期自算盈亏=+190.56 | 自算累计=+190.56 | 平台利润=+1200 | 明细: 球1:开4中", "time": "12:00:04"})
     # 噪音日志（应跳过）
-    ws._persist_flow("followbet", {"msg": "⏳ 未找到注单明细页，请点击...", "time": "12:00:03"})
-    ws._persist_flow("rushbet", {"msg": "[ab99] ⏱ 等待下注窗口 | 倒计时100s", "time": "12:00:04"})
-    ws._persist_flow("followbet", {"msg": "📡 倒计时120s，抓取注单...", "time": "12:00:05"})
+    ws._persist_flow("followbet", {"msg": "⏳ 未找到注单明细页，请点击...", "time": "12:00:05"})
+    ws._persist_flow("rushbet", {"msg": "[ab99] ⏱ 等待下注窗口 | 倒计时100s", "time": "12:00:06"})
+    ws._persist_flow("rushbet", {"msg": "[ab99] 等待开奖结算 | 投注锚点=123，结算前不会继续下注 | 倒计时=0秒", "time": "12:00:07"})
+    ws._persist_flow("rushbet", {"msg": "[审计] 请求停止任务 | 任务=rushbet", "time": "12:00:08"})
+    ws._persist_flow("rushbet", {"msg": "[ab99] 观察到新开奖 | 期号=124 开奖=[1, 2, 3] | 当前实投利润=+0", "time": "12:00:09"})
+    ws._persist_flow("followbet", {"msg": "📡 倒计时120s，抓取注单...", "time": "12:00:10"})
 
-    check(len(captured) == 3, f"3条有用流水入库、3条噪音跳过，实得 {len(captured)}")
+    check(len(captured) == 5, f"5条有用流水入库、6条噪音跳过，实得 {len(captured)}")
     accts = [c[1] for c in captured]
-    check(accts == ["sxwd02", "ab99", "df788"], f"账号正确提取自[方括号]：{accts}")
+    check(accts == ["sxwd02", "ab99", "df788", "ab99", "ab99"], f"账号正确提取自[方括号]：{accts}")
     check(captured[0][0] == "followbet", "模式取自 task_id")
-
 
 # ── 4. 流水库增删查（临时DB）────────────────────────────────
 def test_flow_db():

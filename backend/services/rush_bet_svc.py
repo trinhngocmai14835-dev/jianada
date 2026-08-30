@@ -165,6 +165,16 @@ def _parse_virtual_loss_trigger(raw):
 
 def _virtual_ready_to_real(virtual_profit, trigger_amount):
     return trigger_amount > 0 and virtual_profit <= -trigger_amount
+
+
+def _format_rush_plan(targets, amounts, pos_steps):
+    parts = []
+    for i, nums in enumerate(targets):
+        step = "二阶赢冲" if pos_steps[i] == 2 else "一阶底注"
+        num_text = ",".join(str(n) for n in nums)
+        parts.append(f"球{i+1}:{step} {num_text} x {amounts[i]}")
+    return " | ".join(parts)
+
 def _betting_loop(page, account, cfg, stop_event, log):
     STOP_LOSS = cfg.get("daily_stop_loss", 29000)
     TAKE_PROFIT = cfg.get("take_profit", 25000)
@@ -180,6 +190,7 @@ def _betting_loop(page, account, cfg, stop_event, log):
     virtual_trigger = 0 if conditional else _parse_virtual_loss_trigger(cfg.get("virtual_loss_trigger", 0))
     virtual_active = virtual_trigger > 0
     virtual_profit = 0.0
+    settled_profit = 0.0
 
     TIER_LIST = _parse_tiers(cfg.get("conditional_tiers")) or TIERS
     THRESHOLDS = _parse_thresholds(cfg.get("loss_thresholds")) or LOSS_THRESHOLDS
@@ -257,9 +268,10 @@ def _betting_loop(page, account, cfg, stop_event, log):
                     if gap is not None and gap > 1:
                         log(f"[{account}] 警告：开奖期号从 {pending_issue} 跳到 {issue}，按最新稳定开奖结果结算，请核对记录")
                     phase = "模拟结算" if pending_virtual else "实投结算"
-                    log(f"[{account}] {phase} | 期号={issue} 开奖={draw} | 投注锚点={pending_issue} | 当前实投利润={profit:+.0f}")
+                    log(f"[{account}] {phase} | 期号={issue} 开奖={draw} | 投注锚点={pending_issue} | 平台利润={profit:+.0f}")
 
                     total = 0.0
+                    settle_details = []
                     for i in range(NUM_POSITIONS):
                         if last_targets[i] is None:
                             continue
@@ -287,17 +299,25 @@ def _betting_loop(page, account, cfg, stop_event, log):
                                 log(f"[{account}]   -> 下期输缩回一阶 ({RUSH_BET}->{BASE_BET})")
                             else:
                                 log(f"[{account}]   -> 下期保持一阶底注 ({BASE_BET})")
+                        result = "中" if hit else "未中"
+                        next_step = "二阶赢冲" if pos_steps[i] == 2 else "一阶底注"
+                        nums = ",".join(str(n) for n in last_targets[i])
+                        settle_details.append(
+                            f"球{i+1}:开{draw[i]}{result} 投{nums}x{amt} 盈亏={bp:+.2f} 下期={next_step}"
+                        )
                         total += bp
 
+                    detail_text = " | ".join(settle_details) if settle_details else "无明细"
                     if pending_virtual:
                         virtual_profit += total
-                        log(f"[{account}]   模拟本期盈亏={total:+.2f} | 虚拟累计盈亏={virtual_profit:+.2f} | 触发线=-{virtual_trigger}")
+                        log(f"[{account}]   模拟本期盈亏={total:+.2f} | 虚拟累计盈亏={virtual_profit:+.2f} | 触发线=-{virtual_trigger} | 明细: {detail_text}")
                         if _virtual_ready_to_real(virtual_profit, virtual_trigger):
                             virtual_active = False
                             start_balance = _get_balance(page) or start_balance
                             log(f"[{account}] 虚拟累计亏损已达到{virtual_trigger}元；下一期开始实投，并继承当前一阶/二阶状态 | 实投起始余额={start_balance}")
                     else:
-                        log(f"[{account}]   本期自算盈亏={total:+.2f} | 当前实投利润={profit:+.0f}")
+                        settled_profit += total
+                        log(f"[{account}]   本期自算盈亏={total:+.2f} | 自算累计={settled_profit:+.2f} | 平台利润={profit:+.0f} | 明细: {detail_text}")
 
                     pending_settlement = False
                     pending_virtual = False
@@ -305,7 +325,7 @@ def _betting_loop(page, account, cfg, stop_event, log):
                     last_issue = issue
                     handled_draw = True
             elif issue != last_issue:
-                log(f"[{account}] 观察到新开奖 | 期号={issue} 开奖={draw} | 当前实投利润={profit:+.0f}")
+                log(f"[{account}] 观察到新开奖 | 期号={issue} 开奖={draw} | 平台利润={profit:+.0f}")
                 last_issue = issue
                 handled_draw = True
 
@@ -388,6 +408,7 @@ def _betting_loop(page, account, cfg, stop_event, log):
                     last_targets = targets
                     last_amounts = amounts
                     remain = _get_countdown(page)
+                    log(f"[{account}] 本期选号 | 模拟投注 | 投注锚点={pending_issue} | {_format_rush_plan(targets, amounts, pos_steps)}")
                     log(f"[{account}] 模拟投注已记录 | 投注锚点={pending_issue} | 本期不真实下注 | 预计等待{remain + DRAW_DELAY}秒开奖结算")
                     _sleep_interruptible(remain + DRAW_DELAY, stop_event)
                     bet_placed = False
@@ -402,6 +423,7 @@ def _betting_loop(page, account, cfg, stop_event, log):
                     last_targets = targets
                     last_amounts = amounts
                     remain = _get_countdown(page)
+                    log(f"[{account}] 本期选号 | 实投下注 | 投注锚点={pending_issue} | {_format_rush_plan(targets, amounts, pos_steps)}")
                     log(f"[{account}] 下注成功 | 投注锚点={pending_issue} | 只接受更大期号开奖结算 | 预计等待{remain + DRAW_DELAY}秒")
                     _sleep_interruptible(remain + DRAW_DELAY, stop_event)
                     bet_placed = False

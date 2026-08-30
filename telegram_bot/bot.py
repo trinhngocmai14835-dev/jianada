@@ -1,113 +1,98 @@
 import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from datetime import datetime
+from html import escape
+
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
-    Application, CommandHandler, MessageHandler,
-    CallbackQueryHandler, ConversationHandler, filters, ContextTypes,
+    Application,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    ConversationHandler,
+    MessageHandler,
+    filters,
 )
-from config import BOT_TOKEN, ADMIN_ID, USDT_WALLET, PLANS, RETAIL_PLANS
+
+from config import ADMIN_ID, BOT_TOKEN, USDT_WALLET
 from database import Database
-from tron_verify import verify_usdt_payment
-from license_gen import generate_license_for_machine
-from agent_handlers import (
-    cmd_mybalance, cmd_addagent, cmd_topup, cmd_agents, cmd_agentlog,
-    cmd_issue, cmd_send, get_agent_conv_handler,
-)
+from payment_watcher import start_payment_watcher
+from tron_verify import format_usdt_amount, verify_usdt_deposit
 
 logging.basicConfig(
     format="%(asctime)s %(levelname)s %(message)s",
     level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("telegram").setLevel(logging.WARNING)
 
 db = Database()
+WAIT_TXHASH = 1
 
-# Conversation states
-WAIT_MID, WAIT_PLAN, WAIT_TX = range(3)
 
-STATUS_EMOJI = {
-    "pending": "⏳", "reviewing": "🔍", "confirmed": "✅", "rejected": "❌",
-}
-STATUS_TEXT = {
-    "pending": "待验证", "reviewing": "人工审核中", "confirmed": "已激活", "rejected": "已拒绝",
-}
+def _code(value) -> str:
+    return f"<code>{escape(str(value or ''))}</code>"
 
-# ── 公共命令 ────────────────────────────────────────────────────────────────
 
-def _price_table() -> str:
-    lines = []
-    for p in RETAIL_PLANS.values():
-        lines.append(f"  {p['name']:<6} — {p['price']} USDT")
-    return "\n".join(lines)
+def _user_label(user) -> str:
+    username = f"@{user.username}" if user.username else (user.first_name or str(user.id))
+    return f"{escape(username)} ({_code(user.id)})"
+
+
+def _format_timestamp(block_timestamp) -> str:
+    if not block_timestamp:
+        return "未知"
+    try:
+        return datetime.fromtimestamp(int(block_timestamp) / 1000).strftime("%Y-%m-%d %H:%M:%S")
+    except (TypeError, ValueError, OSError):
+        return "未知"
+
+
+def _copy_address_button() -> InlineKeyboardButton:
+    return InlineKeyboardButton(
+        "复制地址",
+        api_kwargs={"copy_text": {"text": USDT_WALLET}},
+    )
+
+
+def _main_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [_copy_address_button()],
+        [InlineKeyboardButton("提交 TxHash", callback_data="submit_txhash")],
+        [InlineKeyboardButton("我的充值", callback_data="my_recharges")],
+    ])
+
+
+def _recharge_text() -> str:
+    return (
+        "<b>TRC20-USDT 充值</b>\n\n"
+        "网络：<b>TRC-20 / TRON</b>\n"
+        f"收款地址：{_code(USDT_WALLET)}\n"
+        "金额：<b>1 USDT = 6.8</b>\n\n"
+        "转账完成后，请把交易哈希 TxHash 发给我，我会自动查询是否到账。\n\n"
+        "注意：只能使用 TRC-20 网络，其他网络无法在这里确认。"
+    )
 
 
 async def cmd_start(update: Update, _ctx: ContextTypes.DEFAULT_TYPE):
-    kbd = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🛒 立即购买", callback_data="nav|buy")],
-        [
-            InlineKeyboardButton("📋 我的订单", callback_data="nav|mystatus"),
-            InlineKeyboardButton("❓ 购买说明", callback_data="nav|help"),
-        ],
-    ])
     await update.message.reply_text(
-        "👋 欢迎使用 *自动下单系统Pro*！\n\n"
-        "专业自动下注工具，支持：\n"
-        "• 三球9粒自动下注\n"
-        "• 多账号跟投\n\n"
-        "━━━━━━━━ 套餐价格 ━━━━━━━━\n"
-        f"```\n{_price_table()}\n```\n"
-        "━━━━━━━━ 收款地址 ━━━━━━━━\n"
-        f"网络：TRC-20（TRON）\n"
-        f"`{USDT_WALLET}`",
-        parse_mode="Markdown",
-        reply_markup=kbd,
+        _recharge_text(),
+        parse_mode="HTML",
+        reply_markup=_main_keyboard(),
+        disable_web_page_preview=True,
     )
 
 
 async def cmd_help(update: Update, _ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "📖 *购买说明*\n\n"
-        "*套餐价格：*\n"
-        f"```\n{_price_table()}\n```\n"
-        "*收款地址（TRC-20）：*\n"
-        f"`{USDT_WALLET}`\n\n"
-        "*购买步骤：*\n"
-        "1. 发送 /buy\n"
-        "2. 输入软件登录界面的 *机器码*\n"
-        "3. 选择套餐\n"
-        "4. 按金额转账 USDT 到上方地址\n"
-        "5. 提交交易哈希（TxHash）\n"
-        "6. 系统自动验证并发送授权码\n\n"
-        "⚠️ *注意*\n"
-        "• 必须使用 *TRC-20* 网络，其他网络无法到账\n"
-        "• 转账金额须与套餐价格完全一致\n"
-        "• 授权码与机器码绑定，不可转让",
-        parse_mode="Markdown",
+        _recharge_text(),
+        parse_mode="HTML",
+        reply_markup=_main_keyboard(),
+        disable_web_page_preview=True,
     )
 
 
-async def cmd_mystatus(update: Update, _ctx: ContextTypes.DEFAULT_TYPE):
-    orders = db.get_user_orders(update.effective_user.id)
-    if not orders:
-        await update.message.reply_text(
-            "📭 暂无订单，发送 /buy 购买授权。"
-        )
-        return
-
-    lines = ["📋 *您的近期订单：*\n"]
-    for o in orders[:5]:
-        e = STATUS_EMOJI.get(o["status"], "❓")
-        s = STATUS_TEXT.get(o["status"], o["status"])
-        plan_name = PLANS.get(o["plan_id"], {}).get("name", o["plan_id"])
-        lines.append(f"{e} `#{o['id']}` {o['created_at'][:10]}  {plan_name}  {s}")
-        if o["status"] == "confirmed" and o["license_key"]:
-            lines.append(f"   授权码：`{o['license_key']}`")
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
-
-
-# ── 购买流程 ────────────────────────────────────────────────────────────────
-
-async def buy_start(update: Update, _ctx: ContextTypes.DEFAULT_TYPE):
-    # 兼容指令触发和按钮触发两种入口
+async def recharge_start(update: Update, _ctx: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
         await update.callback_query.answer()
         reply = update.callback_query.message.reply_text
@@ -115,321 +100,176 @@ async def buy_start(update: Update, _ctx: ContextTypes.DEFAULT_TYPE):
         reply = update.message.reply_text
 
     await reply(
-        "🛒 *开始购买*\n\n"
-        "请打开软件，在登录界面找到您的 *机器码*，然后发给我。\n\n"
-        "机器码格式：`ABCD1234EFGH5678`（16位字母数字）\n\n"
-        "/cancel 取消",
-        parse_mode="Markdown",
+        _recharge_text() + "\n\n请直接发送 TxHash。\n/cancel 取消",
+        parse_mode="HTML",
+        reply_markup=_main_keyboard(),
+        disable_web_page_preview=True,
     )
-    return WAIT_MID
-
-
-async def recv_machine_id(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    mid = update.message.text.strip().upper()
-    if len(mid) != 16 or not mid.isalnum():
-        await update.message.reply_text(
-            "❌ 机器码格式不对，应为 16 位字母数字。\n请重新输入，或 /cancel 取消。"
-        )
-        return WAIT_MID
-
-    ctx.user_data["machine_id"] = mid
-
-    kbd = [[
-        InlineKeyboardButton(
-            f"{p['name']} — {p['price']} USDT",
-            callback_data=f"plan|{pid}",
-        )
-    ] for pid, p in RETAIL_PLANS.items()]
-
-    await update.message.reply_text(
-        f"✅ 机器码：`{mid}`\n\n请选择套餐：",
-        reply_markup=InlineKeyboardMarkup(kbd),
-        parse_mode="Markdown",
-    )
-    return WAIT_PLAN
-
-
-async def recv_plan(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    pid = query.data.split("|")[1]
-    plan = RETAIL_PLANS.get(pid)   # 只认零售套餐，防伪造 trial7 回调
-    if not plan:
-        await query.edit_message_text("❌ 无效选择，请重新发送 /buy")
-        return ConversationHandler.END
-
-    ctx.user_data["plan_id"] = pid
-    ctx.user_data["plan"] = plan
-
-    await query.edit_message_text(
-        f"✅ 套餐：*{plan['name']}* — {plan['price']} USDT\n\n"
-        f"💳 *付款信息*\n"
-        f"网络：`TRC-20 (TRON)`\n"
-        f"地址：`{USDT_WALLET}`\n"
-        f"金额：`{plan['price']}` USDT\n\n"
-        f"⚠️ 务必通过 *TRC-20* 网络转账，金额须精确。\n\n"
-        f"转账后将 *交易哈希（TxHash）* 发给我（在钱包交易记录里可找到）。\n\n"
-        f"/cancel 取消",
-        parse_mode="Markdown",
-    )
-    return WAIT_TX
+    return WAIT_TXHASH
 
 
 async def recv_txhash(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    txhash = update.message.text.strip()
-    if len(txhash) < 60:
-        await update.message.reply_text(
-            "❌ 交易哈希太短，请粘贴完整的 TxHash。\n或 /cancel 取消。"
-        )
-        return WAIT_TX
-
-    if db.txhash_exists(txhash):
-        await update.message.reply_text(
-            "❌ 该交易哈希已被提交过，请勿重复使用。\n"
-            "如有疑问请联系管理员。"
-        )
-        return WAIT_TX
-
-    mid = ctx.user_data.get("machine_id")
-    pid = ctx.user_data.get("plan_id")
-    plan = ctx.user_data.get("plan")
-    if not mid or not pid or not plan:
-        await update.message.reply_text("❌ 会话已过期，请重新 /buy")
+    if not USDT_WALLET:
+        await update.message.reply_text("收款地址还没有配置，请联系管理员。")
         return ConversationHandler.END
-    user = update.effective_user
 
-    order_id = db.create_order(
+    txhash = (update.message.text or "").strip()
+    if len(txhash) != 64 or any(c not in "0123456789abcdefABCDEF" for c in txhash):
+        await update.message.reply_text(
+            "TxHash 格式不对。请发送 64 位交易哈希，或 /cancel 取消。"
+        )
+        return WAIT_TXHASH
+
+    if db.recharge_txhash_exists(txhash):
+        await update.message.reply_text("这笔 TxHash 已经提交过，请不要重复提交。")
+        return ConversationHandler.END
+
+    msg = await update.message.reply_text("正在查询链上交易，请稍等...")
+    verified, verify_msg, deposit = await verify_usdt_deposit(txhash, USDT_WALLET)
+    if not verified or not deposit:
+        await msg.edit_text(
+            f"暂未确认到账：{escape(verify_msg)}\n\n"
+            "请确认使用的是 TRC-20 网络，并稍后重新提交 TxHash。",
+            parse_mode="HTML",
+        )
+        return ConversationHandler.END
+
+    user = update.effective_user
+    amount = deposit.get("amount", 0)
+    recharge = db.create_recharge(
         user_id=user.id,
         username=user.username or user.first_name or str(user.id),
-        machine_id=mid,
-        plan_id=pid,
-        days=plan["days"],
-        price=plan["price"],
         txhash=txhash,
+        from_address=deposit.get("from_address", ""),
+        to_address=deposit.get("to_address", USDT_WALLET),
+        amount=amount,
+        block_timestamp=deposit.get("block_timestamp"),
+    )
+    db.record_payment_notification(
+        txhash=txhash,
+        from_address=deposit.get("from_address", ""),
+        to_address=deposit.get("to_address", USDT_WALLET),
+        amount=amount,
+        block_timestamp=deposit.get("block_timestamp"),
+        notified=True,
     )
 
-    msg = await update.message.reply_text(
-        f"⏳ 正在验证链上交易…\n订单号：`#{order_id}`",
-        parse_mode="Markdown",
+    recharge_id = recharge["id"] if recharge else "-"
+    amount_text = format_usdt_amount(amount)
+    await msg.edit_text(
+        "充值已确认。\n\n"
+        f"充值编号：{_code(recharge_id)}\n"
+        f"到账金额：{_code(amount_text + ' USDT')}\n"
+        f"TxHash：{_code(txhash)}",
+        parse_mode="HTML",
+        disable_web_page_preview=True,
     )
 
-    verified, verify_msg = await verify_usdt_payment(txhash, USDT_WALLET, plan["price"])
-
-    if verified:
-        license_key = generate_license_for_machine(mid, plan["days"])
-        db.confirm_order(order_id, license_key)
-        await msg.edit_text(
-            f"✅ *付款验证成功！*\n\n"
-            f"您的授权码：\n`{license_key}`\n\n"
-            f"套餐：{plan['name']}  机器码：`{mid}`\n\n"
-            f"在软件登录界面粘贴授权码即可激活，感谢购买！",
-            parse_mode="Markdown",
-        )
-    else:
-        db.set_reviewing(order_id)
-
-        kbd = [[
-            InlineKeyboardButton("✅ 确认发放", callback_data=f"adm|ok|{order_id}"),
-            InlineKeyboardButton("❌ 拒绝",   callback_data=f"adm|no|{order_id}"),
-        ]]
-        await ctx.bot.send_message(
-            chat_id=ADMIN_ID,
-            text=(
-                f"🔔 *订单 #{order_id} 待人工审核*\n\n"
-                f"用户：@{user.username or user.first_name} (`{user.id}`)\n"
-                f"机器码：`{mid}`\n"
-                f"套餐：{plan['name']}（{plan['days']}天）\n"
-                f"金额：{plan['price']} USDT\n"
-                f"TxHash：`{txhash}`\n\n"
-                f"链上验证：❌ {verify_msg}"
-            ),
-            reply_markup=InlineKeyboardMarkup(kbd),
-            parse_mode="Markdown",
-        )
-        await msg.edit_text(
-            f"📋 订单 `#{order_id}` 已提交，正在人工审核。\n"
-            f"通常 1–24 小时内处理，完成后自动发送授权码。",
-            parse_mode="Markdown",
-        )
-
+    await ctx.bot.send_message(
+        chat_id=ADMIN_ID,
+        text=(
+            "<b>客户充值到账</b>\n\n"
+            f"充值编号：{_code(recharge_id)}\n"
+            f"客户：{_user_label(user)}\n"
+            f"金额：{_code(amount_text + ' USDT')}\n"
+            f"付款地址：{_code(deposit.get('from_address', ''))}\n"
+            f"收款地址：{_code(deposit.get('to_address', USDT_WALLET))}\n"
+            f"TxHash：{_code(txhash)}\n"
+            f"区块时间：{_code(_format_timestamp(deposit.get('block_timestamp')))}"
+        ),
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+    )
     return ConversationHandler.END
 
 
-async def cmd_cancel(update: Update, _ctx: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("❎ 已取消。/buy 重新开始。")
-    return ConversationHandler.END
+async def _send_my_recharges(message, user_id: int):
+    rows = db.get_user_recharges(user_id)
+    if not rows:
+        await message.reply_text("暂无充值记录。", reply_markup=_main_keyboard())
+        return
+
+    lines = ["<b>我的充值记录</b>"]
+    for row in rows:
+        amount = format_usdt_amount(row["amount"])
+        lines.append(
+            f"#{row['id']}  {escape(row['created_at'][:16])}  "
+            f"{_code(amount + ' USDT')}"
+        )
+    await message.reply_text("\n".join(lines), parse_mode="HTML")
+
+
+async def cmd_my_recharges(update: Update, _ctx: ContextTypes.DEFAULT_TYPE):
+    await _send_my_recharges(update.message, update.effective_user.id)
+
+
+async def my_recharges_callback(update: Update, _ctx: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await _send_my_recharges(query.message, query.from_user.id)
+
+
+async def cmd_recent(update: Update, _ctx: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    rows = db.get_recent_recharges(20)
+    if not rows:
+        await update.message.reply_text("暂无充值记录。")
+        return
+
+    lines = ["<b>最近充值</b>"]
+    for row in rows:
+        amount = format_usdt_amount(row["amount"])
+        user = row.get("username") or row["user_id"]
+        lines.append(
+            f"#{row['id']}  {escape(str(user))} ({row['user_id']})  "
+            f"{_code(amount + ' USDT')}  {escape(row['created_at'][:16])}"
+        )
+    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
 
 async def cmd_myid(update: Update, _ctx: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
     await update.message.reply_text(
-        f"🪪 您的 Telegram ID：\n`{user.id}`\n\n将此 ID 发给管理员即可。",
-        parse_mode="Markdown",
+        f"您的 Telegram ID：{_code(update.effective_user.id)}",
+        parse_mode="HTML",
     )
 
 
-# ── 导航按钮回调 ─────────────────────────────────────────────────────────────
-
-async def nav_callback(update: Update, _ctx: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    action = query.data.split("|")[1]
-
-    if action == "mystatus":
-        orders = db.get_user_orders(query.from_user.id)
-        if not orders:
-            await query.message.reply_text("📭 暂无订单，点「立即购买」购买授权。")
-            return
-        lines = ["📋 *您的近期订单：*\n"]
-        for o in orders[:5]:
-            e = STATUS_EMOJI.get(o["status"], "❓")
-            s = STATUS_TEXT.get(o["status"], o["status"])
-            plan_name = PLANS.get(o["plan_id"], {}).get("name", o["plan_id"])
-            lines.append(f"{e} `#{o['id']}` {o['created_at'][:10]}  {plan_name}  {s}")
-            if o["status"] == "confirmed" and o["license_key"]:
-                lines.append(f"   授权码：`{o['license_key']}`")
-        await query.message.reply_text("\n".join(lines), parse_mode="Markdown")
-
-    if action == "help":
-        await query.message.reply_text(
-            "📖 *购买说明*\n\n"
-            "*套餐价格：*\n"
-            f"```\n{_price_table()}\n```\n"
-            "*收款地址（TRC-20）：*\n"
-            f"`{USDT_WALLET}`\n\n"
-            "*购买步骤：*\n"
-            "1. 点「立即购买」\n"
-            "2. 输入软件登录界面的 *机器码*\n"
-            "3. 选择套餐\n"
-            "4. 按金额转账 USDT 到上方地址\n"
-            "5. 提交交易哈希（TxHash）\n"
-            "6. 系统自动验证并发送授权码\n\n"
-            "⚠️ *注意*\n"
-            "• 必须使用 *TRC-20* 网络，其他网络无法到账\n"
-            "• 转账金额须与套餐价格完全一致\n"
-            "• 授权码与机器码绑定，不可转让",
-            parse_mode="Markdown",
-        )
+async def cmd_cancel(update: Update, _ctx: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("已取消。发送 /recharge 可重新提交 TxHash。")
+    return ConversationHandler.END
 
 
-# ── 管理员回调 ───────────────────────────────────────────────────────────────
+async def post_init(application: Application):
+    start_payment_watcher(application)
 
-async def admin_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    if query.from_user.id != ADMIN_ID:
-        await query.answer("无权操作", show_alert=True)
-        return
-    await query.answer()
-
-    _, action, oid_str = query.data.split("|")
-    order_id = int(oid_str)
-    order = db.get_order(order_id)
-    if not order:
-        await query.edit_message_text("❌ 订单不存在")
-        return
-
-    if action == "ok":
-        license_key = generate_license_for_machine(order["machine_id"], order["days"])
-        db.confirm_order(order_id, license_key)
-        plan_name = PLANS.get(order["plan_id"], {}).get("name", order["plan_id"])
-
-        await ctx.bot.send_message(
-            chat_id=order["user_id"],
-            text=(
-                f"✅ *付款已确认，授权码如下：*\n\n"
-                f"`{license_key}`\n\n"
-                f"套餐：{plan_name}  机器码：`{order['machine_id']}`\n\n"
-                f"在软件登录界面粘贴授权码即可激活，感谢购买！"
-            ),
-            parse_mode="Markdown",
-        )
-        await query.edit_message_text(
-            f"✅ 订单 #{order_id} 已发放\n授权码：`{license_key}`",
-            parse_mode="Markdown",
-        )
-
-    elif action == "no":
-        db.reject_order(order_id)
-        await ctx.bot.send_message(
-            chat_id=order["user_id"],
-            text=(
-                f"❌ 订单 #{order_id} 验证未通过。\n\n"
-                f"可能原因：金额不符、TxHash 有误、或未用 TRC-20 网络。\n"
-                f"如有疑问请联系管理员，或重新 /buy 下单。"
-            ),
-        )
-        await query.edit_message_text(f"❌ 订单 #{order_id} 已拒绝")
-
-
-async def cmd_pending(update: Update, _ctx: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    orders = db.get_pending_orders()
-    if not orders:
-        await update.message.reply_text("✅ 无待处理订单")
-        return
-    for o in orders:
-        kbd = [[
-            InlineKeyboardButton("✅ 确认发放", callback_data=f"adm|ok|{o['id']}"),
-            InlineKeyboardButton("❌ 拒绝",   callback_data=f"adm|no|{o['id']}"),
-        ]]
-        plan_name = PLANS.get(o["plan_id"], {}).get("name", o["plan_id"])
-        await update.message.reply_text(
-            f"📋 *订单 #{o['id']}*\n"
-            f"用户：`{o['user_id']}` (@{o['username']})\n"
-            f"机器码：`{o['machine_id']}`\n"
-            f"套餐：{plan_name}（{o['days']}天）\n"
-            f"金额：{o['price']} USDT\n"
-            f"TxHash：`{o['txhash']}`\n"
-            f"状态：{STATUS_TEXT.get(o['status'], o['status'])}\n"
-            f"时间：{o['created_at'][:16]}",
-            reply_markup=InlineKeyboardMarkup(kbd),
-            parse_mode="Markdown",
-        )
-
-
-# ── 启动 ────────────────────────────────────────────────────────────────────
 
 def main():
-    app = Application.builder().token(BOT_TOKEN).build()
+    app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 
     conv = ConversationHandler(
         entry_points=[
-            CommandHandler("buy", buy_start),
-            CallbackQueryHandler(buy_start, pattern=r"^nav\|buy$"),
+            CommandHandler("recharge", recharge_start),
+            CallbackQueryHandler(recharge_start, pattern=r"^submit_txhash$"),
         ],
         states={
-            WAIT_MID:  [MessageHandler(filters.TEXT & ~filters.COMMAND, recv_machine_id)],
-            WAIT_PLAN: [CallbackQueryHandler(recv_plan, pattern=r"^plan\|")],
-            WAIT_TX:   [MessageHandler(filters.TEXT & ~filters.COMMAND, recv_txhash)],
+            WAIT_TXHASH: [MessageHandler(filters.TEXT & ~filters.COMMAND, recv_txhash)],
         },
         fallbacks=[CommandHandler("cancel", cmd_cancel)],
         allow_reentry=True,
     )
 
-    app.add_handler(CommandHandler("start",      cmd_start))
-    app.add_handler(CommandHandler("help",       cmd_help))
-    app.add_handler(CommandHandler("mystatus",   cmd_mystatus))
+    app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("help", cmd_help))
+    app.add_handler(CommandHandler("myid", cmd_myid))
+    app.add_handler(CommandHandler("myrecharges", cmd_my_recharges))
+    app.add_handler(CommandHandler("recent", cmd_recent))
     app.add_handler(conv)
-    # 导航按钮（help / mystatus，buy 已在 conv 里处理）
-    app.add_handler(CallbackQueryHandler(nav_callback, pattern=r"^nav\|(?!buy)"))
-    # 代理命令
-    app.add_handler(get_agent_conv_handler())
-    app.add_handler(CommandHandler("mybalance",  cmd_mybalance))
-    app.add_handler(CommandHandler("myid",       cmd_myid))
-    # 管理员命令
-    app.add_handler(CommandHandler("pending",    cmd_pending))
-    app.add_handler(CommandHandler("issue",      cmd_issue))
-    app.add_handler(CommandHandler("send",       cmd_send))
-    app.add_handler(CommandHandler("addagent",   cmd_addagent))
-    app.add_handler(CommandHandler("topup",      cmd_topup))
-    app.add_handler(CommandHandler("agents",     cmd_agents))
-    app.add_handler(CommandHandler("agentlog",   cmd_agentlog))
-    app.add_handler(CallbackQueryHandler(admin_callback, pattern=r"^adm\|"))
+    app.add_handler(CallbackQueryHandler(my_recharges_callback, pattern=r"^my_recharges$"))
+    app.add_handler(MessageHandler(filters.Regex(r"^[0-9a-fA-F]{64}$"), recv_txhash))
 
     logger.info("Bot 启动中...")
-    app.run_polling(drop_pending_updates=True)
+    app.run_polling(drop_pending_updates=False)
 
 
 if __name__ == "__main__":

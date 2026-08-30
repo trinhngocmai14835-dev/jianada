@@ -49,6 +49,7 @@ export const api = {
   // 软件更新
   checkUpdate: () => req('GET', '/update/check'),
   installUpdate: () => req('POST', '/update/install'),
+  getUpdateStatus: () => req('GET', '/update/status'),
 
   // 控制
   startAutoBet: () => req('POST', '/autobet/start'),

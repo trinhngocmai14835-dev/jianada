@@ -37,6 +37,43 @@ class Database:
                     updated_at  TEXT DEFAULT (datetime('now','localtime'))
                 )
             """)
+            # 简化充值记录：只记录客户提交的 TRC20-USDT 入账
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS recharges (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id         INTEGER NOT NULL,
+                    username        TEXT,
+                    txhash          TEXT UNIQUE NOT NULL,
+                    from_address    TEXT,
+                    to_address      TEXT,
+                    amount          REAL NOT NULL,
+                    status          TEXT DEFAULT 'confirmed',
+                    block_timestamp INTEGER,
+                    created_at      TEXT DEFAULT (datetime('now','localtime')),
+                    updated_at      TEXT DEFAULT (datetime('now','localtime'))
+                )
+            """)
+            # 到账通知去重表：记录已处理过的链上入账 TxHash
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS payment_notifications (
+                    txhash          TEXT PRIMARY KEY,
+                    from_address    TEXT,
+                    to_address      TEXT,
+                    amount          REAL NOT NULL,
+                    block_timestamp INTEGER,
+                    order_id        INTEGER,
+                    notified        INTEGER DEFAULT 1,
+                    created_at      TEXT DEFAULT (datetime('now','localtime'))
+                )
+            """)
+            # 简单状态表：存储后台监听是否已完成首次启动初始化
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS app_state (
+                    name       TEXT PRIMARY KEY,
+                    value      TEXT NOT NULL,
+                    updated_at TEXT DEFAULT (datetime('now','localtime'))
+                )
+            """)
             # 代理账户
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS agents (
@@ -103,6 +140,11 @@ class Database:
             row = conn.execute("SELECT * FROM orders WHERE id=?", (order_id,)).fetchone()
             return dict(row) if row else None
 
+    def get_order_by_txhash(self, txhash: str):
+        with self._conn() as conn:
+            row = conn.execute("SELECT * FROM orders WHERE txhash=?", (txhash,)).fetchone()
+            return dict(row) if row else None
+
     def get_user_orders(self, user_id: int):
         with self._conn() as conn:
             rows = conn.execute(
@@ -114,6 +156,62 @@ class Database:
         with self._conn() as conn:
             rows = conn.execute(
                 "SELECT * FROM orders WHERE status IN ('pending','reviewing') ORDER BY id"
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    # ── 简化充值记录 ──────────────────────────────────────────────────────────
+
+    def recharge_txhash_exists(self, txhash: str) -> bool:
+        with self._conn() as conn:
+            row = conn.execute("SELECT 1 FROM recharges WHERE txhash=? LIMIT 1", (txhash,)).fetchone()
+            return row is not None
+
+    def create_recharge(
+        self,
+        user_id: int,
+        username: str,
+        txhash: str,
+        from_address: str,
+        to_address: str,
+        amount: float,
+        block_timestamp=None,
+    ):
+        with self._conn() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO recharges "
+                "(user_id, username, txhash, from_address, to_address, amount, block_timestamp, status) "
+                "VALUES (?,?,?,?,?,?,?,'confirmed')",
+                (
+                    user_id,
+                    username or "",
+                    txhash,
+                    from_address or "",
+                    to_address or "",
+                    float(amount or 0),
+                    block_timestamp,
+                ),
+            )
+            row = conn.execute("SELECT * FROM recharges WHERE txhash=?", (txhash,)).fetchone()
+            return dict(row) if row else None
+
+    def get_recharge_by_txhash(self, txhash: str):
+        with self._conn() as conn:
+            row = conn.execute("SELECT * FROM recharges WHERE txhash=?", (txhash,)).fetchone()
+            return dict(row) if row else None
+
+    def get_user_recharges(self, user_id: int, limit: int = 10):
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM recharges WHERE user_id=? ORDER BY id DESC LIMIT ?",
+                (user_id, limit),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_recent_recharges(self, limit: int = 20):
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM recharges ORDER BY id DESC LIMIT ?",
+                (limit,),
             ).fetchall()
             return [dict(r) for r in rows]
 
@@ -202,6 +300,67 @@ class Database:
                 (txhash,),
             ).fetchone()
             return row is not None
+
+    def payment_notification_exists(self, txhash: str) -> bool:
+        """检查该链上入账是否已经提醒或标记过。"""
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM payment_notifications WHERE txhash=? LIMIT 1",
+                (txhash,),
+            ).fetchone()
+            return row is not None
+
+    def record_payment_notification(
+        self,
+        txhash: str,
+        from_address: str = "",
+        to_address: str = "",
+        amount: float = 0,
+        block_timestamp=None,
+        order_id=None,
+        notified: bool = True,
+    ) -> bool:
+        """记录已处理的到账通知。返回 True 表示本次新插入。"""
+        txhash = (txhash or "").strip()
+        if not txhash:
+            return False
+        with self._conn() as conn:
+            cur = conn.execute(
+                "INSERT OR IGNORE INTO payment_notifications "
+                "(txhash, from_address, to_address, amount, block_timestamp, order_id, notified) "
+                "VALUES (?,?,?,?,?,?,?)",
+                (
+                    txhash,
+                    from_address or "",
+                    to_address or "",
+                    float(amount or 0),
+                    block_timestamp,
+                    order_id,
+                    1 if notified else 0,
+                ),
+            )
+            return cur.rowcount == 1
+
+    def link_payment_notification_order(self, txhash: str, order_id: int):
+        """当客户后来提交 TxHash 时，把已监听到的到账记录关联到订单。"""
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE payment_notifications SET order_id=COALESCE(order_id, ?) WHERE txhash=?",
+                (order_id, txhash),
+            )
+
+    def get_app_state(self, name: str, default=None):
+        with self._conn() as conn:
+            row = conn.execute("SELECT value FROM app_state WHERE name=?", (name,)).fetchone()
+            return row["value"] if row else default
+
+    def set_app_state(self, name: str, value):
+        with self._conn() as conn:
+            conn.execute(
+                "INSERT INTO app_state (name, value, updated_at) VALUES (?,?,datetime('now','localtime')) "
+                "ON CONFLICT(name) DO UPDATE SET value=excluded.value, updated_at=datetime('now','localtime')",
+                (name, str(value)),
+            )
 
     def has_used_trial(self, machine_id: str, plan_id: str = "trial7") -> bool:
         """检查该机器是否已经用过试用卡（跨所有代理）"""

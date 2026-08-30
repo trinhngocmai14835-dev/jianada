@@ -3,7 +3,7 @@ import {
   Card, Form, Input, InputNumber, Button, Space, Typography, Divider,
   Row, Col, message, Tag, Collapse, Radio, Modal,
 } from 'antd'
-import { PlusOutlined, MinusCircleOutlined, PlayCircleOutlined, PauseCircleOutlined } from '@ant-design/icons'
+import { PlusOutlined, MinusCircleOutlined, PlayCircleOutlined, PauseCircleOutlined, ClockCircleOutlined } from '@ant-design/icons'
 import { api } from '../api/client'
 import LogViewer from '../components/LogViewer'
 
@@ -49,6 +49,13 @@ export default function RushBetPage() {
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
 
+  const showSaveError = (err) => {
+    const firstError = err?.errorFields?.[0]
+    if (firstError?.name) {
+      form.scrollToField(firstError.name, { block: 'center' })
+    }
+    message.error(firstError?.errors?.[0] || err?.message || '请检查表单填写')
+  }
   const refresh = async () => {
     const s = await api.getStatus()
     setStatus(s.rushbet || 'stopped')
@@ -61,15 +68,20 @@ export default function RushBetPage() {
     return () => clearInterval(t)
   }, [])
 
-  const handleSave = async () => {
+  const handleSave = async (overrides = {}) => {
     try {
+      const saveOverrides = overrides && (overrides.nativeEvent || overrides.currentTarget || overrides.target) ? {} : (overrides || {})
       const vals = await form.validateFields()
       setSaving(true)
-      await api.saveRushBetConfig(vals)
+      const res = await api.saveRushBetConfig({ ...vals, ...saveOverrides })
+      if (res?.ok === false) {
+        message.error(res.message || '保存失败')
+        return false
+      }
       message.success('配置已保存')
       return true
-    } catch {
-      message.error('请检查表单填写')
+    } catch (err) {
+      showSaveError(err)
       return false
     } finally {
       setSaving(false)
@@ -85,17 +97,14 @@ export default function RushBetPage() {
     refresh()
   }
 
-  const handleStart = async () => {
-    // 表单没过校验就不要拿旧配置去跑
-    if (!(await handleSave())) return
+  const handleStartNow = async () => {
+    form.setFieldsValue({ start_mode: 'now' })
+    if (!(await handleSave({ start_mode: 'now' }))) return
+    doStart()
+  }
 
-    if ((form.getFieldValue('start_mode') || 'now') !== 'scheduled') {
-      doStart()
-      return
-    }
-
-    // 闹钟模式：把算出来的真实开跑时刻摆出来确认，
-    // 免得「设了08:00却在08:30点开始」等了一整天才发现。
+  const handleStartScheduled = async () => {
+    form.setFieldsValue({ start_mode: 'scheduled' })
     const t = nextAlarm(form.getFieldValue('start_time'))
     if (!t) {
       message.error('开跑时刻格式不对，应为 08:00')
@@ -119,7 +128,10 @@ export default function RushBetPage() {
       ),
       okText: '确认启动',
       cancelText: '取消',
-      onOk: doStart,
+      onOk: async () => {
+        if (!(await handleSave({ start_mode: 'scheduled' }))) return Promise.reject()
+        await doStart()
+      },
     })
   }
 
@@ -141,9 +153,12 @@ export default function RushBetPage() {
           {STATUS_TAG[status]}
         </Space>
         <Space>
-          <Button icon={<PlayCircleOutlined />} type="primary" onClick={handleStart} loading={loading} disabled={isRunning}
+          <Button icon={<PlayCircleOutlined />} type="primary" onClick={handleStartNow} loading={loading} disabled={isRunning}
             style={{ background: '#fa8c16', borderColor: '#fa8c16' }}>
-            {startMode === 'scheduled' ? '保存并定时启动' : '保存并启动'}
+            保存并随开随跑
+          </Button>
+          <Button icon={<ClockCircleOutlined />} onClick={handleStartScheduled} loading={loading} disabled={isRunning}>
+            保存并定时启动
           </Button>
           <Button icon={<PauseCircleOutlined />} danger onClick={handleStop} loading={loading} disabled={!isRunning}>
             停止
@@ -160,14 +175,14 @@ export default function RushBetPage() {
                   <Form.Item label="入口网址" name="entry_url" rules={[{ required: true }]}>
                     <Input placeholder="https://166.tt" />
                   </Form.Item>
-                  <Form.Item label="安全码" name="safe_code" rules={[{ required: true }]}>
-                    <Input placeholder="88361" />
+                  <Form.Item label="安全码" name="safe_code">
+                    <Input placeholder="没有则留空" />
                   </Form.Item>
                 </Panel>
 
                 <Panel header="⏰ 启动方式" key="start">
                   <Form.Item label="启动方式" name="start_mode" initialValue="now" style={{ marginBottom: 12 }}>
-                    <Radio.Group optionType="button" buttonStyle="solid">
+                    <Radio.Group optionType="button" buttonStyle="solid" disabled={isRunning}>
                       <Radio.Button value="now">随开随跑</Radio.Button>
                       <Radio.Button value="scheduled">闹钟定时</Radio.Button>
                     </Radio.Group>
@@ -342,7 +357,7 @@ export default function RushBetPage() {
               </Collapse>
 
               <Divider />
-              <Button onClick={handleSave} loading={saving} block>
+              <Button onClick={() => handleSave()} loading={saving} block>
                 仅保存配置
               </Button>
             </Form>

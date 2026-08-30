@@ -10,13 +10,17 @@ from core.db import add_flow
 router = APIRouter()
 
 # 只把"有用流水"落盘：登录/下注/结算/止盈止损；其余啰嗦日志不入库
-_FLOW_MARKERS = ('登录完成', '本期选号', '下注成功', '跟客户', '开奖',
-                 '本期自算', '本期盈亏', '本期总盈亏', '止盈', '止损', '锁利', '审计')
+_FLOW_MARKERS = ('登录完成', '本期选号', '下注成功', '跟客户', '📊 开奖',
+                 '实投结算 |', '模拟结算 |', '开奖结算 |',
+                 '本期自算', '本期盈亏', '本期总盈亏', '止盈', '止损', '锁利')
+_FLOW_SKIP_MARKERS = ('等待开奖结算', '等待下注窗口', '观察到新开奖')
 _ACC_RE = re.compile(r'\[([^\]]+)\]')
 
 
 def _persist_flow(task_id, m):
     text = m.get("msg", "") or ""
+    if text.startswith("[审计]") or any(k in text for k in _FLOW_SKIP_MARKERS):
+        return
     if not any(k in text for k in _FLOW_MARKERS):
         return
     am = _ACC_RE.search(text)

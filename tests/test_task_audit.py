@@ -55,11 +55,46 @@ def test_start_stop_audit_logs():
     check(tm.status("audit_test") == "stopped", "final status stopped")
 
 
+def test_start_mode_normalization():
+    print("[2] start_mode normalization")
+    from api.routes import _normalize_start_config
+
+    now_cfg = _normalize_start_config({"start_mode": "now", "start_time": "9:5"}, "08:00")
+    check(now_cfg["start_mode"] == "now", "now mode stays immediate")
+    check(now_cfg["start_time"] == "09:05", "start_time is normalized to HH:MM")
+
+    scheduled_cfg = _normalize_start_config({"start_mode": "scheduled", "start_time": "23:59"}, "08:00")
+    check(scheduled_cfg["start_mode"] == "scheduled", "scheduled mode is preserved")
+    check(scheduled_cfg["start_time"] == "23:59", "valid scheduled time is preserved")
+
+    bad_cfg = _normalize_start_config({"start_mode": "both", "start_time": "99:00"}, "08:00")
+    check(bad_cfg["start_mode"] == "now", "invalid mixed mode falls back to now")
+    check(bad_cfg["start_time"] == "08:00", "invalid time falls back to default")
+
+
+
+def test_update_install_status():
+    print("[3] update install progress status")
+    from services.updater import get_update_install_status, start_update_install
+
+    status = get_update_install_status()
+    for key in ["ok", "running", "phase", "percent", "message", "downloaded_bytes", "total_bytes"]:
+        check(key in status, f"status has {key}")
+    check(status["running"] is False, "idle updater is not running")
+    check(status["phase"] == "idle", "idle phase is exposed")
+
+    res = start_update_install()
+    check(res["ok"] is False, "non-frozen updater refuses install without starting background job")
+    check("status" in res, "failed start still returns status")
+
+
 def main():
     print("=" * 56)
     print("task audit tests")
     print("=" * 56)
     test_start_stop_audit_logs()
+    test_start_mode_normalization()
+    test_update_install_status()
     print("=" * 56)
     print("ALL OK")
 

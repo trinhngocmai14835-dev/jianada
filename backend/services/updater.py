@@ -12,12 +12,54 @@ import urllib.parse
 import urllib.request
 import zipfile
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Callable, Dict, Optional
 
 from core.version import APP_EXE_NAME, APP_VERSION, UPDATE_ALLOWED_HOSTS, UPDATE_MANIFEST_URL
 
 _CHUNK_SIZE = 1024 * 1024
-_TASK_EXIT_DELAY = 1.0
+_TASK_EXIT_DELAY = 1.5
+_INSTALL_LOCK = threading.Lock()
+_INSTALL_STATE: Dict[str, Any] = {}
+
+
+def _timestamp() -> str:
+    return time.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _initial_install_state() -> Dict[str, Any]:
+    return {
+        "ok": True,
+        "running": False,
+        "phase": "idle",
+        "percent": 0,
+        "message": "",
+        "downloaded_bytes": 0,
+        "total_bytes": 0,
+        "current_version": APP_VERSION,
+        "latest_version": "",
+        "updated_at": _timestamp(),
+    }
+
+
+def _set_install_state(**fields) -> Dict[str, Any]:
+    with _INSTALL_LOCK:
+        if not _INSTALL_STATE:
+            _INSTALL_STATE.update(_initial_install_state())
+        _INSTALL_STATE.update(fields)
+        _INSTALL_STATE["updated_at"] = _timestamp()
+        return dict(_INSTALL_STATE)
+
+
+def get_update_install_status() -> Dict[str, Any]:
+    with _INSTALL_LOCK:
+        if not _INSTALL_STATE:
+            _INSTALL_STATE.update(_initial_install_state())
+        return dict(_INSTALL_STATE)
+
+
+def _report(progress_callback: Optional[Callable[..., None]], **fields) -> None:
+    if progress_callback:
+        progress_callback(**fields)
 
 
 def _version_key(version: str) -> tuple:
@@ -106,11 +148,40 @@ def check_for_update() -> Dict[str, Any]:
         }
 
 
-def _download_file(url: str, dest: Path) -> None:
+def _download_file(url: str, dest: Path, progress_callback: Optional[Callable[..., None]] = None) -> None:
     safe_url = _validate_update_url(url)
     req = urllib.request.Request(safe_url, headers={"User-Agent": f"AutoBetPro/{APP_VERSION}"})
     with urllib.request.urlopen(req, timeout=60) as resp, open(dest, "wb") as out:
-        shutil.copyfileobj(resp, out, length=_CHUNK_SIZE)
+        try:
+            total = int(resp.headers.get("Content-Length") or 0)
+        except Exception:
+            total = 0
+        downloaded = 0
+        _report(
+            progress_callback,
+            phase="downloading",
+            percent=8,
+            message="正在下载更新包...",
+            downloaded_bytes=downloaded,
+            total_bytes=total,
+        )
+        while True:
+            chunk = resp.read(_CHUNK_SIZE)
+            if not chunk:
+                break
+            out.write(chunk)
+            downloaded += len(chunk)
+            percent = 8
+            if total > 0:
+                percent = min(80, 8 + int(downloaded * 72 / total))
+            _report(
+                progress_callback,
+                phase="downloading",
+                percent=percent,
+                message="正在下载更新包...",
+                downloaded_bytes=downloaded,
+                total_bytes=total,
+            )
 
 
 def _sha256(path: Path) -> str:
@@ -150,6 +221,7 @@ def _write_helper_script(update_dir: Path, new_exe: Path, current_exe: Path) -> 
     script = update_dir / "apply_update.ps1"
     backup = current_exe.with_suffix(current_exe.suffix + ".bak")
     log = update_dir / "update.log"
+    expected_exe_hash = _sha256(new_exe)
     body = f"""
 $ErrorActionPreference = 'Stop'
 $pidToWait = {os.getpid()}
@@ -157,23 +229,89 @@ $src = {_ps_quote(new_exe)}
 $dst = {_ps_quote(current_exe)}
 $backup = {_ps_quote(backup)}
 $log = {_ps_quote(log)}
+$expectedHash = '{expected_exe_hash.upper()}'
+$maxAttempts = 90
+$retryDelayMs = 1000
+$maxWaitSeconds = 180
 function Write-UpdateLog($msg) {{
   Add-Content -LiteralPath $log -Value ("$(Get-Date -Format s) " + $msg) -Encoding UTF8
 }}
+function Get-AppProcessIds {{
+  $items = @()
+  foreach ($p in Get-Process -ErrorAction SilentlyContinue) {{
+    try {{
+      if ($p.Path -eq $dst) {{ $items += $p.Id }}
+    }} catch {{}}
+  }}
+  return $items
+}}
+function Show-UpdateError($msg) {{
+  try {{
+    Add-Type -AssemblyName PresentationFramework
+    [System.Windows.MessageBox]::Show($msg, "自动更新失败") | Out-Null
+  }} catch {{}}
+}}
+function Restore-BackupIfNeeded {{
+  if (!(Test-Path -LiteralPath $dst) -and (Test-Path -LiteralPath $backup)) {{
+    Move-Item -LiteralPath $backup -Destination $dst -Force
+  }}
+}}
+function Replace-Executable {{
+  $dir = Split-Path -Parent $dst
+  $tmp = Join-Path $dir ((Split-Path -Leaf $dst) + ".new")
+  if (Test-Path -LiteralPath $tmp) {{ Remove-Item -LiteralPath $tmp -Force }}
+  Copy-Item -LiteralPath $src -Destination $tmp -Force
+  $tmpHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $tmp).Hash
+  if ($tmpHash -ne $expectedHash) {{
+    throw "new exe hash mismatch: $tmpHash"
+  }}
+  if (Test-Path -LiteralPath $backup) {{ Remove-Item -LiteralPath $backup -Force }}
+  if (Test-Path -LiteralPath $dst) {{
+    Move-Item -LiteralPath $dst -Destination $backup -Force
+  }}
+  Move-Item -LiteralPath $tmp -Destination $dst -Force
+  $dstHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $dst).Hash
+  if ($dstHash -ne $expectedHash) {{
+    Restore-BackupIfNeeded
+    throw "installed exe hash mismatch: $dstHash"
+  }}
+}}
 try {{
   Write-UpdateLog "waiting for old process"
-  while (Get-Process -Id $pidToWait -ErrorAction SilentlyContinue) {{ Start-Sleep -Milliseconds 500 }}
-  Start-Sleep -Milliseconds 800
-  if (Test-Path -LiteralPath $dst) {{ Copy-Item -LiteralPath $dst -Destination $backup -Force }}
-  Copy-Item -LiteralPath $src -Destination $dst -Force
-  Write-UpdateLog "replace complete"
-  Start-Process -FilePath $dst
+  $waitStarted = Get-Date
+  while ((Get-Process -Id $pidToWait -ErrorAction SilentlyContinue) -or ((Get-AppProcessIds).Count -gt 0)) {{
+    if (((Get-Date) - $waitStarted).TotalSeconds -ge $maxWaitSeconds) {{
+      throw "old process still running after $maxWaitSeconds seconds"
+    }}
+    Start-Sleep -Milliseconds 500
+  }}
+  Start-Sleep -Milliseconds 1200
+
+  for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {{
+    try {{
+      Replace-Executable
+      Write-UpdateLog "replace complete on attempt $attempt"
+      Start-Sleep -Milliseconds 500
+      Start-Process -FilePath $dst
+      exit 0
+    }} catch {{
+      Restore-BackupIfNeeded
+      Write-UpdateLog ("replace attempt " + $attempt + " failed: " + $_.Exception.Message)
+      Start-Sleep -Milliseconds $retryDelayMs
+    }}
+  }}
+  throw "replace failed after $maxAttempts attempts"
 }} catch {{
+  $msg = "更新替换失败，请关闭所有 自动下单系统Pro 进程后重新打开旧版本再点更新。" + [Environment]::NewLine + $_.Exception.Message
   Write-UpdateLog ("replace failed: " + $_.Exception.Message)
-  if (Test-Path -LiteralPath $dst) {{ Start-Process -FilePath $dst }}
+  Show-UpdateError $msg
+  if ((Get-AppProcessIds).Count -eq 0) {{
+    if (Test-Path -LiteralPath $dst) {{ Start-Process -FilePath $dst }}
+    elseif (Test-Path -LiteralPath $backup) {{ Start-Process -FilePath $backup }}
+  }}
 }}
 """.lstrip()
-    script.write_text(body, encoding="utf-8")
+    script.write_text(body, encoding="utf-8-sig")
     return script
 
 
@@ -182,7 +320,8 @@ def _exit_current_process_later() -> None:
     os._exit(0)
 
 
-def prepare_update_install() -> Dict[str, Any]:
+def prepare_update_install(progress_callback: Optional[Callable[..., None]] = None) -> Dict[str, Any]:
+    _report(progress_callback, phase="checking", percent=2, message="正在检查更新...", current_version=APP_VERSION)
     if not getattr(sys, "frozen", False):
         return {"ok": False, "message": "当前不是打包后的 EXE，无法自动替换更新"}
 
@@ -201,6 +340,14 @@ def prepare_update_install() -> Dict[str, Any]:
     url = str(manifest.get("url") or "")
     expected_hash = str(manifest.get("sha256") or "").lower().strip()
     latest_version = str(manifest.get("version") or check.get("latest_version") or "latest")
+    _report(
+        progress_callback,
+        phase="ready",
+        percent=5,
+        message="已发现新版本，准备下载...",
+        current_version=APP_VERSION,
+        latest_version=latest_version,
+    )
     if not re.fullmatch(r"[a-fA-F0-9]{64}", expected_hash or ""):
         return {"ok": False, "message": "更新配置缺少有效 sha256，已取消自动更新"}
 
@@ -215,7 +362,8 @@ def prepare_update_install() -> Dict[str, Any]:
 
     zip_path = download_dir / "update.zip"
     try:
-        _download_file(url, zip_path)
+        _download_file(url, zip_path, progress_callback)
+        _report(progress_callback, phase="verifying", percent=84, message="正在校验更新包...", latest_version=latest_version)
         actual_hash = _sha256(zip_path)
         if actual_hash != expected_hash:
             return {
@@ -224,7 +372,9 @@ def prepare_update_install() -> Dict[str, Any]:
                 "expected_sha256": expected_hash,
                 "actual_sha256": actual_hash,
             }
+        _report(progress_callback, phase="extracting", percent=90, message="正在解压更新包...", latest_version=latest_version)
         _safe_extract(zip_path, extract_dir)
+        _report(progress_callback, phase="preparing", percent=96, message="正在准备替换程序...", latest_version=latest_version)
         new_exe = _find_update_exe(extract_dir)
         helper = _write_helper_script(update_root, new_exe, current_exe)
         creationflags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
@@ -234,6 +384,7 @@ def prepare_update_install() -> Dict[str, Any]:
             close_fds=True,
             creationflags=creationflags,
         )
+        _report(progress_callback, phase="restarting", percent=100, message="更新包已下载，软件即将关闭并自动重启", latest_version=latest_version)
         threading.Thread(target=_exit_current_process_later, daemon=True).start()
         return {
             "ok": True,
@@ -243,3 +394,69 @@ def prepare_update_install() -> Dict[str, Any]:
         }
     except Exception as exc:
         return {"ok": False, "message": f"安装更新失败：{exc}"}
+
+
+def _run_update_install_job() -> None:
+    def _progress(**fields):
+        _set_install_state(ok=True, running=True, **fields)
+
+    try:
+        result = prepare_update_install(_progress)
+        if result.get("ok"):
+            _set_install_state(
+                ok=True,
+                running=True,
+                phase="restarting",
+                percent=100,
+                message=result.get("message") or "更新包已下载，软件即将关闭并自动重启",
+                current_version=result.get("current_version", APP_VERSION),
+                latest_version=result.get("latest_version") or get_update_install_status().get("latest_version") or "",
+            )
+        else:
+            last = get_update_install_status()
+            _set_install_state(
+                ok=False,
+                running=False,
+                phase="failed",
+                percent=last.get("percent", 0),
+                message=result.get("message") or "更新失败",
+                current_version=result.get("current_version", APP_VERSION),
+                latest_version=result.get("latest_version") or last.get("latest_version") or "",
+            )
+    except Exception as exc:
+        last = get_update_install_status()
+        _set_install_state(
+            ok=False,
+            running=False,
+            phase="failed",
+            percent=last.get("percent", 0),
+            message=f"安装更新失败：{exc}",
+            current_version=APP_VERSION,
+            latest_version=last.get("latest_version") or "",
+        )
+
+
+def start_update_install() -> Dict[str, Any]:
+    if not getattr(sys, "frozen", False):
+        return {"ok": False, "message": "当前不是打包后的 EXE，无法自动替换更新", "status": get_update_install_status()}
+
+    with _INSTALL_LOCK:
+        if not _INSTALL_STATE:
+            _INSTALL_STATE.update(_initial_install_state())
+        if _INSTALL_STATE.get("running"):
+            return {"ok": True, "started": False, "message": "更新正在进行中", "status": dict(_INSTALL_STATE)}
+        _INSTALL_STATE.clear()
+        _INSTALL_STATE.update(_initial_install_state())
+        _INSTALL_STATE.update({
+            "ok": True,
+            "running": True,
+            "phase": "queued",
+            "percent": 0,
+            "message": "更新任务已开始，请不要关闭软件...",
+            "updated_at": _timestamp(),
+        })
+        status = dict(_INSTALL_STATE)
+
+    thread = threading.Thread(target=_run_update_install_job, daemon=True, name="update-install")
+    thread.start()
+    return {"ok": True, "started": True, "message": "已开始下载更新包，请不要关闭软件", "status": status}
