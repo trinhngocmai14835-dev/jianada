@@ -61,15 +61,27 @@ export default function RushBetPage() {
     return () => clearInterval(t)
   }, [])
 
+  const showSaveError = (err) => {
+    const firstError = err?.errorFields?.[0]
+    if (firstError?.name) {
+      form.scrollToField(firstError.name, { block: 'center' })
+    }
+    message.error(firstError?.errors?.[0] || err?.message || '请检查表单填写')
+  }
+
   const handleSave = async () => {
     try {
       const vals = await form.validateFields()
       setSaving(true)
-      await api.saveRushBetConfig(vals)
+      const res = await api.saveRushBetConfig(vals)
+      if (res?.ok === false) {
+        message.error(res.message || '保存失败')
+        return false
+      }
       message.success('配置已保存')
       return true
-    } catch {
-      message.error('请检查表单填写')
+    } catch (err) {
+      showSaveError(err)
       return false
     } finally {
       setSaving(false)
@@ -160,8 +172,8 @@ export default function RushBetPage() {
                   <Form.Item label="入口网址" name="entry_url" rules={[{ required: true }]}>
                     <Input placeholder="https://166.tt" />
                   </Form.Item>
-                  <Form.Item label="安全码" name="safe_code" rules={[{ required: true }]}>
-                    <Input placeholder="88361" />
+                  <Form.Item label="安全码" name="safe_code">
+                    <Input placeholder="没有则留空" />
                   </Form.Item>
                 </Panel>
 
