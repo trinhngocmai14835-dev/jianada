@@ -5,38 +5,54 @@ echo   自动下单系统 Pro — 一键打包
 echo ============================================
 
 echo.
-echo [1/5] 安装 Python 依赖...
-cd /d "%~dp0backend"
-pip install -r requirements.txt -q
+echo [1/6] 安装固定版本的构建依赖...
+cd /d "%~dp0"
+pip install -r requirements-release.txt -q
 if errorlevel 1 (echo 安装依赖失败 & exit /b 1)
 
-echo [2/5] 安装 Playwright 浏览器...
+echo [2/6] 运行自动化测试...
+python -m pytest -q
+if errorlevel 1 (echo 自动化测试失败 & exit /b 1)
+
+echo [3/6] 安装 Playwright 浏览器...
 playwright install chromium
 if errorlevel 1 echo 警告: Playwright 浏览器安装失败，可继续打包
 
-echo [3/5] 构建前端...
+echo [4/6] 构建前端...
 cd /d "%~dp0frontend"
-call npm install --silent
-if errorlevel 1 (echo npm install 失败 & exit /b 1)
+call npm ci --silent
+if errorlevel 1 (echo npm ci 失败 & exit /b 1)
 call npm run build
 if errorlevel 1 (echo 前端构建失败 & exit /b 1)
 echo 前端构建完成 (输出到 backend/static/)
 
-echo [4/5] PyArmor 加密源代码...
+echo [5/6] PyArmor 加密源代码...
 cd /d "%~dp0backend"
-pip install "pyarmor" -q
-if errorlevel 1 (echo ⚠️  PyArmor 安装失败，跳过加密步骤 & goto PACK)
+pyarmor --version > "%TEMP%\jianada-pyarmor-version.txt" 2>&1
+if errorlevel 1 (echo PyArmor 不可用 & exit /b 1)
+findstr /i /c:"trial" /c:"non-profits" "%TEMP%\jianada-pyarmor-version.txt" >nul
+if not errorlevel 1 if not "%ALLOW_TRIAL_PYARMOR%"=="1" (
+  type "%TEMP%\jianada-pyarmor-version.txt"
+  echo 正式构建禁止使用 PyArmor 试用/非商业许可证
+  exit /b 1
+)
 
 rd /s /q "%~dp0backend\obf_build" 2>nul
 pyarmor gen --output "%~dp0backend\obf_build" -r core services api main.py
-if errorlevel 1 (echo ⚠️  PyArmor 加密失败，跳过加密步骤 & goto PACK)
+if errorlevel 1 (
+  if "%ALLOW_UNOBFUSCATED_BUILD%"=="1" (
+    echo 警告: 已显式允许未加密调试构建
+  ) else (
+    echo PyArmor 加密失败，正式构建已中止
+    exit /b 1
+  )
+)
 
 echo PyArmor 加密完成
 
 :PACK
-echo [5/5] 打包 EXE...
+echo [6/6] 打包 EXE...
 cd /d "%~dp0backend"
-pip install pyinstaller -q
 
 for /f "delims=" %%i in ('python -c "import ddddocr,os;print(os.path.dirname(ddddocr.__file__))"') do set DDDDOCR_DIR=%%i
 for /f "delims=" %%i in ('python -c "import playwright,os;print(os.path.dirname(playwright.__file__))"') do set PW_PKG=%%i
@@ -54,6 +70,8 @@ set MAIN_PY=main.py
 if exist "%~dp0backend\obf_build\main.py" set MAIN_PY=%~dp0backend\obf_build\main.py
 
 pyinstaller ^
+  --clean ^
+  --noconfirm ^
   --onefile ^
   --noconsole ^
   --name "自动下单系统Pro" ^
@@ -100,6 +118,7 @@ pyinstaller ^
   --paths "%~dp0backend\obf_build" ^
   "%MAIN_PY%"
 if errorlevel 1 (echo 打包失败 & exit /b 1)
+if not exist "%~dp0backend\dist\自动下单系统Pro.exe" (echo 未找到打包输出 & exit /b 1)
 
 echo.
 echo ============================================
