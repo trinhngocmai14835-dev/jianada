@@ -11,6 +11,11 @@ from services.follow_bet_svc import run as follow_bet_run, _launch_source_browse
 from services.rush_bet_svc import run as rush_bet_run
 from services.pick_bet_svc import run as pick_bet_run
 from services.rotate_bet_svc import run as rotate_bet_run
+from services.custom_rotate_bet_svc import (
+    run as custom_rotate_bet_run,
+    get_account_statuses as custom_rotatebet_account_statuses,
+    stop_account as stop_custom_rotatebet_account,
+)
 from services.account_whitelist import get_account_whitelist_status, check_accounts_allowed
 from services.updater import check_for_update, get_update_install_status, start_update_install
 
@@ -22,6 +27,7 @@ TASK_LABELS = {
     "pickbet": "自选助赢冲",
     "followbet": "多账号跟投",
     "rotatebet": "轮换追损",
+    "custom_rotatebet": "自定义金额轮换追损",
 }
 
 
@@ -144,6 +150,16 @@ DEFAULT_ROTATEBET = {
     "bet_window_max": 90,
     "close_buffer": 0,
     "draw_delay": 73,
+}
+
+DEFAULT_CUSTOM_ROTATEBET = {
+    **DEFAULT_ROTATEBET,
+    "amount_steps": [100, 130, 299, 389, 506],
+    "base_bet_amount": 100,
+    "entry_miss_trigger": 1,
+    "enabled_positions": [True, True, True],
+    "start_mode": "now",
+    "start_time": "09:00",
 }
 
 DEFAULT_FOLLOWBET = {
@@ -331,6 +347,20 @@ def save_rotatebet_config(data: dict):
     return {"ok": True}
 
 
+@router.get("/config/custom-rotatebet")
+def get_custom_rotatebet_config():
+    return _normalize_start_config({**DEFAULT_CUSTOM_ROTATEBET, **get_config("custom_rotatebet_config", {})}, DEFAULT_CUSTOM_ROTATEBET["start_time"])
+
+
+@router.post("/config/custom-rotatebet")
+def save_custom_rotatebet_config(data: dict):
+    existing = get_config("custom_rotatebet_config", DEFAULT_CUSTOM_ROTATEBET)
+    existing.update(data)
+    existing = _normalize_start_config(existing, DEFAULT_CUSTOM_ROTATEBET["start_time"])
+    set_config("custom_rotatebet_config", existing)
+    return {"ok": True}
+
+
 @router.get("/status")
 def get_status():
     return _task_statuses()
@@ -432,6 +462,40 @@ def start_rotatebet():
 @router.post("/rotatebet/stop")
 def stop_rotatebet():
     ok, msg = TaskManager.get().stop("rotatebet")
+    return {"ok": ok, "message": msg}
+
+
+@router.post("/custom-rotatebet/start")
+def start_custom_rotatebet():
+    ok, msg = _check_license()
+    if not ok:
+        return {"ok": False, "message": msg}
+    cfg = _normalize_start_config({**DEFAULT_CUSTOM_ROTATEBET, **get_config("custom_rotatebet_config", {})}, DEFAULT_CUSTOM_ROTATEBET["start_time"])
+    ok, msg = _check_account_whitelist("custom_rotatebet", cfg)
+    if not ok:
+        return {"ok": False, "message": msg}
+    ok, msg = TaskManager.get().start("custom_rotatebet", custom_rotate_bet_run, cfg)
+    return {"ok": ok, "message": msg}
+
+
+@router.post("/custom-rotatebet/stop")
+def stop_custom_rotatebet():
+    ok, msg = TaskManager.get().stop("custom_rotatebet")
+    return {"ok": ok, "message": msg}
+
+
+@router.get("/custom-rotatebet/accounts/status")
+def custom_rotatebet_account_status():
+    return {"accounts": custom_rotatebet_account_statuses()}
+
+
+class StopCustomRotateBetAccountRequest(BaseModel):
+    key: str
+
+
+@router.post("/custom-rotatebet/accounts/stop")
+def stop_custom_rotatebet_account_route(req: StopCustomRotateBetAccountRequest):
+    ok, msg = stop_custom_rotatebet_account(req.key)
     return {"ok": ok, "message": msg}
 
 

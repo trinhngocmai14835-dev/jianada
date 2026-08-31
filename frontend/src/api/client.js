@@ -42,6 +42,8 @@ export const api = {
   saveFollowBetConfig: (data) => req('POST', '/config/followbet', data),
   getRotateBetConfig: () => req('GET', '/config/rotatebet'),
   saveRotateBetConfig: (data) => req('POST', '/config/rotatebet', data),
+  getCustomRotateBetConfig: () => req('GET', '/config/custom-rotatebet'),
+  saveCustomRotateBetConfig: (data) => req('POST', '/config/custom-rotatebet', data),
 
   // 状态
   getStatus: () => req('GET', '/status'),
@@ -63,6 +65,10 @@ export const api = {
   openFollowerBrowser: (port, entry_url) => req('POST', '/followbet/open-browser', { port: String(port), entry_url: entry_url || '' }),
   startRotateBet: () => req('POST', '/rotatebet/start'),
   stopRotateBet: () => req('POST', '/rotatebet/stop'),
+  startCustomRotateBet: () => req('POST', '/custom-rotatebet/start'),
+  stopCustomRotateBet: () => req('POST', '/custom-rotatebet/stop'),
+  getCustomRotateBetAccountStatuses: () => req('GET', '/custom-rotatebet/accounts/status'),
+  stopCustomRotateBetAccount: (key) => req('POST', '/custom-rotatebet/accounts/stop', { key }),
 
   // 投注流水
   getFlow: (account = '', mode = '', limit = 800) =>

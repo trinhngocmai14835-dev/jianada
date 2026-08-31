@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { Card, Row, Col, Tag, Button, Space, Typography, Statistic, Alert } from 'antd'
-import { PlayCircleOutlined, PauseCircleOutlined, ThunderboltOutlined, FireOutlined, AimOutlined, TeamOutlined } from '@ant-design/icons'
+import { PlayCircleOutlined, PauseCircleOutlined, ThunderboltOutlined, FireOutlined, AimOutlined, TeamOutlined, RetweetOutlined } from '@ant-design/icons'
 import { api } from '../api/client'
 import UpdateNotice from '../components/UpdateNotice'
 
@@ -13,7 +13,7 @@ const STATUS_TAG = {
 }
 
 export default function Dashboard({ licenseInfo }) {
-  const [status, setStatus] = useState({ autobet: 'stopped', rushbet: 'stopped', pickbet: 'stopped', followbet: 'stopped' })
+  const [status, setStatus] = useState({ autobet: 'stopped', rushbet: 'stopped', pickbet: 'stopped', followbet: 'stopped', custom_rotatebet: 'stopped' })
   const [loading, setLoading] = useState({})
 
   const refresh = async () => {
@@ -39,6 +39,8 @@ export default function Dashboard({ licenseInfo }) {
         'pickbet-stop': api.stopPickBet,
         'followbet-start': api.startFollowBet,
         'followbet-stop': api.stopFollowBet,
+        'custom-rotatebet-start': api.startCustomRotateBet,
+        'custom-rotatebet-stop': api.stopCustomRotateBet,
       }[action]
       await fn()
       await refresh()
@@ -222,6 +224,45 @@ export default function Dashboard({ licenseInfo }) {
             </Space>
           </Card>
         </Col>
+
+        <Col xs={24} md={12}>
+          <Card
+            title={<Space><RetweetOutlined style={{ color: '#eb2f96' }} /><span>自定义金额轮换追损</span></Space>}
+            extra={STATUS_TAG[status.custom_rotatebet] || STATUS_TAG.stopped}
+            style={{ borderRadius: 12, marginBottom: 24 }}
+          >
+            <Space direction="vertical" style={{ width: '100%' }} size={16}>
+              <Text type="secondary">三路 A/B 轮换，按自定义金额阶梯独立追损，支持运行中新增账号和单账号停止。</Text>
+              <Row gutter={16}>
+                <Col span={12}>
+                  <Statistic title="状态" value={status.custom_rotatebet === 'running' ? '运行中' : '已停止'} />
+                </Col>
+              </Row>
+              <Space>
+                <Button
+                  type="primary"
+                  icon={<PlayCircleOutlined />}
+                  disabled={status.custom_rotatebet === 'running'}
+                  loading={loading['custom_rotatebet']}
+                  onClick={() => ctrl('custom-rotatebet-start', 'custom_rotatebet')}
+                  style={{ background: '#eb2f96', borderColor: '#eb2f96' }}
+                >
+                  启动
+                </Button>
+                <Button
+                  danger
+                  icon={<PauseCircleOutlined />}
+                  disabled={status.custom_rotatebet === 'stopped'}
+                  loading={loading['custom_rotatebet-stop']}
+                  onClick={() => ctrl('custom-rotatebet-stop', 'custom_rotatebet-stop')}
+                >
+                  停止
+                </Button>
+              </Space>
+            </Space>
+          </Card>
+        </Col>
+
       </Row>
 
       {/* 授权信息 */}

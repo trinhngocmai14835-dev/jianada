@@ -11,6 +11,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "backend"))
 
 import services.rotate_bet_svc as rotate
+import services.custom_rotate_bet_svc as custom_rotate
 import services.rush_bet_svc as rush
 
 
@@ -145,6 +146,72 @@ def test_rotate_late_window_bets_immediately():
     check(len(calls) == 1, "no close buffer still attempts late bet")
     check(any("立即下注" in m for m in logs), "late window does not wait random delay")
 
+
+def test_custom_rotate_loop_uses_custom_amount_steps():
+    print("[3] custom rotate loop uses custom amount steps")
+    stop = threading.Event()
+    calls = []
+    logs = []
+    state = {"placed": 0}
+
+    old = {
+        "balance": custom_rotate._get_balance,
+        "countdown": custom_rotate._get_countdown,
+        "draw": custom_rotate._get_last_draw_with_issue,
+        "place": custom_rotate._place_bet,
+        "sleep_interruptible": custom_rotate._sleep_interruptible,
+        "sleep": custom_rotate.time.sleep,
+        "read_stable_draw": custom_rotate.read_stable_draw,
+    }
+
+    def fake_draw(page):
+        if state["placed"] >= 1:
+            return "101", [1, 4, 3]
+        return "100", [0, 0, 0]
+
+    def fake_place(page, targets, amounts, log, account):
+        calls.append((targets, amounts))
+        state["placed"] += 1
+        if state["placed"] >= 2:
+            stop.set()
+        return True
+
+    try:
+        custom_rotate._get_balance = lambda page: 1000
+        custom_rotate._get_countdown = lambda page: 50
+        custom_rotate._get_last_draw_with_issue = fake_draw
+        custom_rotate._place_bet = fake_place
+        custom_rotate._sleep_interruptible = lambda seconds, stop_event: None
+        custom_rotate.time.sleep = lambda seconds: None
+        custom_rotate.read_stable_draw = lambda page, reader: reader(page)
+
+        custom_rotate._betting_loop(FakePage(), "acct", {
+            "amount_steps": [10, 30, 50],
+            "entry_miss_trigger": 0,
+            "enabled_positions": [True, True, True],
+            "number_sets": [
+                {"set_a": [0, 1, 3, 5], "set_b": [2, 4, 6, 7, 9]},
+                {"set_a": [0, 1, 3, 5], "set_b": [2, 4, 6, 7, 9]},
+                {"set_a": [0, 1, 3, 5], "set_b": [2, 4, 6, 7, 9]},
+            ],
+            "bet_window_max": 90,
+            "draw_delay": 73,
+            "daily_stop_loss": 999999,
+            "take_profit": 999999,
+        }, stop, logs.append)
+    finally:
+        custom_rotate._get_balance = old["balance"]
+        custom_rotate._get_countdown = old["countdown"]
+        custom_rotate._get_last_draw_with_issue = old["draw"]
+        custom_rotate._place_bet = old["place"]
+        custom_rotate._sleep_interruptible = old["sleep_interruptible"]
+        custom_rotate.time.sleep = old["sleep"]
+        custom_rotate.read_stable_draw = old["read_stable_draw"]
+
+    check(len(calls) == 2, "custom loop place_bet called twice")
+    check(calls[0][1] == [10, 10, 10], "custom first bet uses first tier")
+    check(calls[1][1] == [10, 30, 10], "custom second bet advances only missed ball")
+
 def test_fixed_rush_virtual_then_real_inherits_step():
     print("[2] fixed rush virtual trigger then real bet")
     stop = threading.Event()
@@ -224,7 +291,7 @@ def main():
     print("=" * 56)
     print("betting loop smoke tests")
     print("=" * 56)
-    for fn in [test_rotate_loop_chase_after_miss, test_rotate_late_window_bets_immediately, test_fixed_rush_virtual_then_real_inherits_step]:
+    for fn in [test_rotate_loop_chase_after_miss, test_rotate_late_window_bets_immediately, test_custom_rotate_loop_uses_custom_amount_steps, test_fixed_rush_virtual_then_real_inherits_step]:
         fn()
     print("=" * 56)
     print("ALL OK")

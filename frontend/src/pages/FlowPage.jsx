@@ -13,9 +13,10 @@ const MODE_LABEL = {
   pickbet: '自选号赢冲',
   followbet: '多账号跟投',
   rotatebet: '轮换追损',
+  custom_rotatebet: '自定义金额轮换追损',
 }
 const MODE_COLOR = {
-  autobet: 'blue', rushbet: 'volcano', pickbet: 'geekblue', followbet: 'green', rotatebet: 'purple',
+  autobet: 'blue', rushbet: 'volcano', pickbet: 'geekblue', followbet: 'green', rotatebet: 'purple', custom_rotatebet: 'magenta',
 }
 
 export default function FlowPage() {

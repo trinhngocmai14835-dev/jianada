@@ -88,6 +88,40 @@ def test_update_install_status():
     check("status" in res, "failed start still returns status")
 
 
+
+def test_resource_conflict_guards():
+    print("[4] task account and port conflict guards")
+    tm = TaskManager()
+
+    def target(config, stop_event, log_queue):
+        while not stop_event.is_set():
+            time.sleep(0.01)
+
+    ok, msg = tm.start("mode_a", target, {"accounts": [{"account": "acct1", "port": 9222}]})
+    check(ok is True, "first resource owner starts")
+
+    ok, msg = tm.start("mode_b", target, {"accounts": [{"account": "acct2", "port": 9222}]})
+    check(ok is False and "9222" in msg, "second task cannot reuse running port")
+
+    ok, msg = tm.start("mode_c", target, {"accounts": [{"account": "acct1", "port": 9223}]})
+    check(ok is False and "acct1" in msg.lower(), "second task cannot reuse running account")
+
+    ok, msg = tm.start("mode_d", target, {"accounts": [
+        {"account": "dup", "port": 9301},
+        {"account": "dup", "port": 9302},
+    ]})
+    check(ok is False and "dup" in msg.lower(), "single task config cannot duplicate account")
+
+    ok, msg = tm.stop("mode_a")
+    check(ok is True, "resource owner stop requested")
+    tm._tasks["mode_a"]["thread"].join(timeout=2)
+    check(tm.status("mode_a") == "stopped", "resource owner stopped")
+
+    ok, msg = tm.start("mode_b", target, {"accounts": [{"account": "acct2", "port": 9222}]})
+    check(ok is True, "port can be reused after owner stops")
+    tm.stop("mode_b")
+    tm._tasks["mode_b"]["thread"].join(timeout=2)
+
 def main():
     print("=" * 56)
     print("task audit tests")
@@ -95,6 +129,7 @@ def main():
     test_start_stop_audit_logs()
     test_start_mode_normalization()
     test_update_install_status()
+    test_resource_conflict_guards()
     print("=" * 56)
     print("ALL OK")
 
