@@ -1,0 +1,56 @@
+name: Windows package
+
+on:
+  workflow_dispatch:
+    inputs:
+      notes:
+        description: Release notes
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Require PyArmor CI registration
+        shell: pwsh
+        env:
+          PYARMOR_CI_REGFILE_BASE64: ${{ secrets.PYARMOR_CI_REGFILE_BASE64 }}
+        run: |
+          if (-not $env:PYARMOR_CI_REGFILE_BASE64) { throw "Missing PYARMOR_CI_REGFILE_BASE64" }
+          [IO.File]::WriteAllBytes("pyarmor-ci.zip", [Convert]::FromBase64String($env:PYARMOR_CI_REGFILE_BASE64))
+      - name: Install release dependencies and register PyArmor
+        shell: pwsh
+        run: |
+          pip install -r requirements-release.txt
+          pyarmor reg pyarmor-ci.zip
+          pyarmor --version
+      - name: Build EXE
+        shell: cmd
+        run: build.bat
+      - name: Prepare updater files
+        shell: pwsh
+        env:
+          RELEASE_NOTES: ${{ inputs.notes }}
+        run: |
+          Set-Content -LiteralPath release-notes.txt -Value $env:RELEASE_NOTES -Encoding UTF8
+          python tools/prepare_release.py --notes-file release-notes.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: autobet-pro-release-candidate
+          path: release_upload/*
+          retention-days: 14
+          if-no-files-found: error
