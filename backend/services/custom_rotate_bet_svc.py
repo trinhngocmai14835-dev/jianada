@@ -99,6 +99,21 @@ class _CustomAmountPathState:
         self.set_idx ^= 1
 
 
+def _get_settled_balance(page, samples=3, interval=0.35) -> float | None:
+    """Read the balance after settlement has propagated to the page."""
+    values = []
+    for index in range(max(1, int(samples))):
+        value = _get_balance(page)
+        if value is not None:
+            values.append(value)
+        if index + 1 < samples:
+            time.sleep(max(0, float(interval)))
+    if not values:
+        return None
+    values.sort()
+    return values[len(values) // 2]
+
+
 def _account_key(acc_info: dict) -> str:
     account = str(acc_info.get("account", "")).strip()
     port = str(acc_info.get("port", "")).strip()
@@ -273,7 +288,8 @@ def _betting_loop(page, account, cfg, stop_event, log):
         log(f"[{account}] 错误：至少需要启用一路球，当前三路都已关闭")
         return
 
-    start_balance = _get_balance(page) or 0
+    start_balance = _get_settled_balance(page) or _get_balance(page) or 0
+    settled_balance = start_balance
     initial_draw = read_stable_draw(page, _get_last_draw_with_issue)
     last_issue = initial_draw[0] if initial_draw else None
     pending_issue = None
@@ -302,7 +318,11 @@ def _betting_loop(page, account, cfg, stop_event, log):
             time.sleep(3)
             continue
 
-        profit = bal - start_balance
+        if not pending_settlement:
+            stable_balance = _get_settled_balance(page, samples=2, interval=0.2)
+            if stable_balance is not None:
+                settled_balance = stable_balance
+        profit = settled_balance - start_balance
         if profit >= take_profit:
             log(f"[{account}] 已触发止盈：利润={profit:.0f} >= {take_profit}")
             break

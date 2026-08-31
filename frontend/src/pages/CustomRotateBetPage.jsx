@@ -231,6 +231,7 @@ export default function CustomRotateBetPage() {
   ]
 
   const isRunning = status === 'running'
+  const saveButtonText = isRunning ? '保存并加入运行会话' : '仅保存配置'
 
   return (
     <div style={{ padding: 24 }}>
@@ -416,9 +417,14 @@ export default function CustomRotateBetPage() {
               </Collapse>
 
               <Divider />
-              <Button onClick={() => handleSave()} loading={saving} block>
-                仅保存配置
+              <Button onClick={() => handleSave()} loading={saving} block type={isRunning ? 'primary' : 'default'}>
+                {saveButtonText}
               </Button>
+              {isRunning && (
+                <Typography.Paragraph type="secondary" style={{ margin: '10px 0 0', fontSize: 12 }}>
+                  运行中新增账号时，点击此按钮会保存账号并加入当前会话。原有账号不会重启；新账号登录后从第 1 阶开始，等待下一个完整投注周期再运行。
+                </Typography.Paragraph>
+              )}
             </Form>
           </Card>
         </Col>
