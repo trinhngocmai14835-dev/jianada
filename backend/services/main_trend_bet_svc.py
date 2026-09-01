@@ -156,8 +156,14 @@ def _result_desc(draw) -> str:
     total = result["total"]
     labels = "/".join(result["labels"]) if result["labels"] else "未知"
     suffix = " 特殊赔率1.6" if result["special"] else ""
-    return f"和值={total} {labels}{suffix}"
-
+    nums = []
+    for item in draw or []:
+        try:
+            nums.append(str(int(item)))
+        except (TypeError, ValueError):
+            pass
+    draw_desc = "[" + ",".join(nums[:3]) + "]" if len(nums) >= 3 else "未知"
+    return f"开奖记录三球={draw_desc} 和值={total} {labels}{suffix}"
 
 def _target_for_path(path_index: int, set_idx: int) -> str:
     return PATH_TARGETS[path_index][set_idx % 2]
@@ -224,23 +230,28 @@ def _place_main_trend_bet(page, target_amounts: dict[str, int], log, account):
         log(f"[{account}] 主势盘赔率未开放或已封盘：{missing}，跳过本期")
         return False, odds_snapshot
 
-    clear_ids = list(TARGET_INPUT_IDS.values())
-    fill_map = {TARGET_INPUT_IDS[target]: amount for target, amount in cleaned.items()}
-    frame.evaluate(
-        """(payload) => {
-            const setValue = (el, value) => {
-                if (!el) return;
-                const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-                if (setter) setter.call(el, value);
-                else el.value = value;
-                ['input', 'change', 'keyup'].forEach((type) => el.dispatchEvent(new Event(type, { bubbles: true })));
-            };
-            payload.clearIds.forEach((id) => setValue(document.querySelector('#' + id), ''));
-            Object.keys(payload.fillMap).forEach((id) => setValue(document.querySelector('#' + id), String(payload.fillMap[id])));
-        }""",
-        {"clearIds": clear_ids, "fillMap": fill_map},
+    clear_ids = json.dumps(list(TARGET_INPUT_IDS.values()), ensure_ascii=False)
+    fill_map = json.dumps(
+        {TARGET_INPUT_IDS[target]: amount for target, amount in cleaned.items()},
+        ensure_ascii=False,
     )
-
+    fill_js = (
+        "(function(){"
+        f"var clearIds={clear_ids};"
+        f"var fillMap={fill_map};"
+        "var setValue=function(el,value){"
+        "if(!el)return;"
+        "var desc=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value');"
+        "if(desc&&desc.set){desc.set.call(el,value);}else{el.value=value;}"
+        "el.dispatchEvent(new Event('input',{bubbles:true}));"
+        "el.dispatchEvent(new Event('change',{bubbles:true}));"
+        "el.dispatchEvent(new KeyboardEvent('keyup',{bubbles:true,key:'Enter',code:'Enter'}));"
+        "};"
+        "for(var i=0;i<clearIds.length;i++){setValue(document.querySelector('#'+clearIds[i]),'');}"
+        "Object.keys(fillMap).forEach(function(id){setValue(document.querySelector('#'+id),String(fillMap[id]));});"
+        "})()"
+    )
+    frame.evaluate(fill_js)
     confirm_js = (
         "(function(){"
         "var bs=document.querySelectorAll('input[type=\"button\"],button');"
@@ -274,8 +285,21 @@ def _goto_main_trend_page(page, account, log):
         log(f"[{account}] 已在主势盘页面")
         return page
 
+    selector = 'a[href*="page=zsp"], a[url*="page=zsp"]'
     try:
-        page.locator('a[href*="page=zsp"], a[url*="page=zsp"]').first.click(timeout=5000)
+        page.locator(selector).first.click(timeout=5000)
+        time.sleep(1.5)
+    except Exception:
+        pass
+
+    frame = page.frame(name="frame") or page
+    current_url = getattr(frame, "url", "") or ""
+    if "page=zsp" in current_url:
+        log(f"[{account}] 已切换到主势盘页面")
+        return page
+
+    try:
+        frame.locator(selector).first.click(timeout=5000)
         time.sleep(1.5)
     except Exception:
         pass
@@ -294,10 +318,15 @@ def _goto_main_trend_page(page, account, log):
             target_url = current_url + "&page=zsp"
     if target_url:
         frame.goto(target_url, wait_until="domcontentloaded", timeout=15000)
-        log(f"[{account}] 已打开主势盘页面")
+        time.sleep(1.5)
+        frame = page.frame(name="frame") or page
+        current_url = getattr(frame, "url", "") or ""
+        if "page=zsp" in current_url:
+            log(f"[{account}] 已打开主势盘页面")
+            return page
     else:
         log(f"[{account}] 警告：未识别当前盘口地址，无法自动切换主势盘")
-    return page
+    raise RuntimeError("未能切换到主势盘页面，已停止本账号，避免在其他盘口页面误下注")
 
 
 def _observe_entry_draw(paths, draw, account, log, targets=None, rotate_after=False, enabled_paths=None):
@@ -614,7 +643,7 @@ def _run_account(acc_info, config, entry_url, safe_code, chrome_path, parent_sto
             page.on("dialog", lambda d: d.accept())
 
             try:
-                login_page = _login(page, context, account, password, entry_url, safe_code, log)
+                login_page = _login(page, context, account, password, entry_url, safe_code, log, target_page="zsp")
                 _goto_main_trend_page(login_page, account, log)
                 _set_account_status(key, status="waiting", message="已登录，等待开跑")
                 _wait_until_start(config, account, stop_event, log)

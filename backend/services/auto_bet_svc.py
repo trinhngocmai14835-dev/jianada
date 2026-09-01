@@ -110,7 +110,21 @@ def _get_chrome() -> str | None:
 
 # ─── 登录流程 ────────────────────────────────────────────────
 
-def _login(page, context, account: str, password: str, entry_url: str, safe_code: str, log, line_kw: str = "会员线路"):
+def _login(
+    page,
+    context,
+    account: str,
+    password: str,
+    entry_url: str,
+    safe_code: str,
+    log,
+    line_kw: str = "会员线路",
+    target_page: str = "hm13",
+):
+    target_page = str(target_page or "hm13").strip()
+    if target_page not in {"hm13", "zsp"}:
+        target_page = "hm13"
+    target_desc = "主势盘" if target_page == "zsp" else "单球1~3"
     log(f"[{account}] 登录阶段 1/8：打开入口 {entry_url}")
     page.goto(entry_url, wait_until="domcontentloaded", timeout=60000)
     time.sleep(2)
@@ -225,13 +239,12 @@ def _login(page, context, account: str, password: str, entry_url: str, safe_code
             break
     log(f"[{account}] 登录阶段 7/8：公告弹窗处理完成，已关闭{closed}个")
 
-    log(f"[{account}] 登录阶段 8/8：进入单球1~3下注页")
+    log(f"[{account}] 登录阶段 8/8：进入{target_desc}下注页")
     try:
-        login_page.locator('a[href*="page=hm13"]').first.click()
+        login_page.locator(f'a[href*="page={target_page}"], a[url*="page={target_page}"]').first.click(timeout=8000)
         time.sleep(3)
     except Exception as e:
-        log(f"[{account}] 登录阶段 8/8：未能自动进入单球页，继续使用当前页：{e}")
-
+        log(f"[{account}] 登录阶段 8/8：未能自动进入{target_desc}页，继续使用当前页：{e}")
     log(f"[{account}] 登录完成，当前页: {login_page.url[:60]}")
     return login_page
 # ─── 下注逻辑 ────────────────────────────────────────────────

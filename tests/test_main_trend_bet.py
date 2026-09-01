@@ -17,6 +17,9 @@ from services.main_trend_bet_svc import (  # noqa: E402
     _parse_enabled_paths,
     _settlement_odds,
     _target_hit,
+    _result_desc,
+    _place_main_trend_bet,
+    _goto_main_trend_page,
     _finalize_account,
 )
 
@@ -49,6 +52,9 @@ def test_main_trend_edges():
 
     check(_settlement_odds([7, 7, 7], "大", 2.05) == 2.05, "normal hit should keep page odds")
     check(_settlement_odds([7, 7, 7], "小", 2.05) == 2.05, "non-hit leaves fallback unchanged")
+    desc = _result_desc([4, 4, 5])
+    check("开奖记录三球=[4,4,5]" in desc, "result log should expose draw numbers from history")
+    check("和值=13" in desc, "result log should expose computed total")
 
 
 def test_independent_paths_and_entry_rotation():
@@ -87,6 +93,87 @@ def test_enabled_paths_and_dom_ids():
     check(TARGET_INPUT_IDS == {"大": "odds_DX1", "小": "odds_DX2", "单": "odds_DS3", "双": "odds_DS4"}, "main trend input ids")
 
 
+
+
+class _NoopLocator:
+    @property
+    def first(self):
+        return self
+
+    def click(self, *args, **kwargs):
+        return None
+
+
+class _FakeFrame:
+    def __init__(self, url):
+        self.url = url
+        self.evaluations = []
+        self.goto_urls = []
+
+    def evaluate(self, script, *args):
+        self.evaluations.append((script, args))
+        if "oddsValue" in script:
+            return '{"大":"2.05","小":"2.05","单":"2.05","双":"2.05"}'
+        return None
+
+    def locator(self, selector):
+        return _NoopLocator()
+
+    def goto(self, url, **kwargs):
+        self.goto_urls.append(url)
+        self.url = url
+
+
+class _FakePage:
+    def __init__(self, frame):
+        self._frame = frame
+        self.evaluations = []
+
+    def frame(self, name=None):
+        return self._frame
+
+    def evaluate(self, script, *args):
+        self.evaluations.append((script, args))
+        return None
+
+    def locator(self, selector):
+        return _NoopLocator()
+
+
+def test_main_trend_bet_fill_uses_no_argument_evaluate():
+    frame = _FakeFrame("https://example.test/PlaceBet/Index?lotteryType=JND282&page=zsp")
+    page = _FakePage(frame)
+    logs = []
+
+    ok, odds = _place_main_trend_bet(page, {"大": 20, "单": 20}, logs.append, "acct")
+
+    check(ok is True, "main trend bet should submit when odds are open")
+    check(odds["大"] == 2.05 and odds["单"] == 2.05, "odds should be read before submit")
+    fill_calls = [item for item in frame.evaluations if "var clearIds" in item[0]]
+    check(len(fill_calls) == 1, "amount fill script should run once")
+    check(fill_calls[0][1] == (), "amount fill script should not pass a Playwright payload argument")
+
+
+def test_goto_main_trend_page_uses_zsp_not_hm13():
+    frame = _FakeFrame("https://example.test/PlaceBet/Index?lotteryType=JND282&page=hm13")
+    page = _FakePage(frame)
+    logs = []
+
+    _goto_main_trend_page(page, "acct", logs.append)
+
+    check("page=zsp" in frame.url, "main trend mode must land on zsp page")
+    check(frame.goto_urls and "page=zsp" in frame.goto_urls[-1], "fallback navigation should rewrite page to zsp")
+
+
+def test_goto_main_trend_page_refuses_unknown_url():
+    frame = _FakeFrame("")
+    page = _FakePage(frame)
+    raised = False
+    try:
+        _goto_main_trend_page(page, "acct", lambda msg: None)
+    except RuntimeError as exc:
+        raised = "主势盘页面" in str(exc)
+    check(raised, "unknown page should stop instead of betting on the wrong board")
 
 def test_account_finalize_marks_exit_as_manual_stop():
     key = "acct@9222"
@@ -135,6 +222,9 @@ def main():
     test_independent_paths_and_entry_rotation()
     test_amount_steps_and_reset()
     test_enabled_paths_and_dom_ids()
+    test_main_trend_bet_fill_uses_no_argument_evaluate()
+    test_goto_main_trend_page_uses_zsp_not_hm13()
+    test_goto_main_trend_page_refuses_unknown_url()
     test_account_finalize_marks_exit_as_manual_stop()
     test_account_finalize_keeps_all_stop_clean()
     print("test_main_trend_bet: OK")
