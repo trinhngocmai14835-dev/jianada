@@ -96,6 +96,7 @@ export default function CustomRotateBetPage() {
   const [form] = Form.useForm()
   const startMode = Form.useWatch('start_mode', form) || 'now'
   const amountSteps = Form.useWatch('amount_steps', form) || []
+  const accountList = Form.useWatch('accounts', form) || []
   const [status, setStatus] = useState('stopped')
   const [accounts, setAccounts] = useState([])
   const [loading, setLoading] = useState(false)
@@ -188,6 +189,16 @@ export default function CustomRotateBetPage() {
     })
   }
 
+  const handleSaveAndRunAccounts = async () => {
+    if (!(await handleSave())) return
+    if (isRunning) {
+      message.success('?????????????????????????')
+      refresh()
+      return
+    }
+    await doStart()
+  }
+
   const handleStop = async () => {
     setLoading(true)
     const res = await api.stopCustomRotateBet()
@@ -231,7 +242,8 @@ export default function CustomRotateBetPage() {
   ]
 
   const isRunning = status === 'running'
-  const saveButtonText = isRunning ? '保存并运行新增账号' : '仅保存配置'
+  const hasMultipleAccounts = accountList.length > 1
+  const saveButtonText = hasMultipleAccounts ? '保存并运行新增账号' : '仅保存配置'
 
   return (
     <div style={{ padding: 24 }}>
@@ -417,10 +429,10 @@ export default function CustomRotateBetPage() {
               </Collapse>
 
               <Divider />
-              <Button onClick={() => handleSave()} loading={saving} block type={isRunning ? 'primary' : 'default'}>
+              <Button onClick={hasMultipleAccounts ? handleSaveAndRunAccounts : () => handleSave()} loading={saving || (hasMultipleAccounts && loading)} block type={hasMultipleAccounts ? 'primary' : 'default'}>
                 {saveButtonText}
               </Button>
-              {isRunning && (
+              {hasMultipleAccounts && (
                 <Typography.Paragraph type="secondary" style={{ margin: '10px 0 0', fontSize: 12 }}>
                   运行中新增账号时，点击此按钮会保存账号并加入当前会话。原有账号不会重启；新账号登录后从第 1 阶开始，等待下一个完整投注周期再运行。
                 </Typography.Paragraph>
