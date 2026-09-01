@@ -2,6 +2,7 @@
 import asyncio
 import queue
 import re
+import socket
 import sys
 import threading
 import time
@@ -130,6 +131,37 @@ def _account_resources(acc_info: dict) -> dict[str, set[str]]:
         "ports": {port} if port else set(),
     }
 
+def _port_in_use(port) -> bool:
+    try:
+        port_num = int(str(port or "").strip())
+    except (TypeError, ValueError):
+        return False
+    if port_num <= 0:
+        return False
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(0.5)
+            return sock.connect_ex(("127.0.0.1", port_num)) == 0
+    except OSError:
+        return False
+
+
+def _prepare_launch_port(port, wait_for_next_cycle: bool, log):
+    if wait_for_next_cycle and _port_in_use(port):
+        raise RuntimeError(f"浏览器端口 {port} 已被占用，已取消启动新账号，避免关闭其他正在运行的浏览器")
+    _free_port(port, log)
+
+
+def _friendly_account_error(exc: Exception) -> str:
+    msg = str(exc)
+    closed_markers = (
+        "Target page, context or browser has been closed",
+        "Browser has been closed",
+        "Target closed",
+    )
+    if any(marker in msg for marker in closed_markers):
+        return "浏览器页面已关闭，请检查是否手动关闭窗口，或新增账号端口是否重复/被占用"
+    return msg
 
 def _set_account_status(key: str, **updates):
     with _STATUS_LOCK:
@@ -508,7 +540,7 @@ def _run_account(acc_info, config, entry_url, safe_code, chrome_path, parent_sto
         "--window-size=1280,900",
     ]
 
-    _free_port(port, log)
+    _prepare_launch_port(port, wait_for_next_cycle, log)
     try:
         with sync_playwright() as p:
             kwargs = {"headless": False, "args": launch_args}
@@ -539,14 +571,23 @@ def _run_account(acc_info, config, entry_url, safe_code, chrome_path, parent_sto
                     _set_account_status(key, status="running", message="运行中")
                     _betting_loop(login_page, account, config, stop_event, log)
             except Exception as e:
-                _set_account_status(key, status="error", message=str(e))
-                log(f"[{account}] 运行异常: {e}")
+                if stop_event.is_set():
+                    _set_account_status(key, status="stopped", message="已停止")
+                    log(f"[{account}] 收到停止信号，账号线程退出")
+                else:
+                    message = _friendly_account_error(e)
+                    _set_account_status(key, status="error", message=message)
+                    log(f"[{account}] 运行异常: {message}")
             finally:
-                browser.close()
+                try:
+                    browser.close()
+                except Exception:
+                    pass
                 log(f"[{account}] 浏览器已关闭")
     except Exception as e:
-        _set_account_status(key, status="error", message=str(e))
-        log(f"[{account}] 启动失败: {e}")
+        message = _friendly_account_error(e)
+        _set_account_status(key, status="error", message=message)
+        log(f"[{account}] 启动失败: {message}")
     finally:
         with _STATUS_LOCK:
             _ACCOUNT_STOPS.pop(key, None)
@@ -585,7 +626,17 @@ def run(config: dict, stop_event: threading.Event, log_queue: queue.Queue):
         try:
             from core.task_manager import TaskManager
 
-            TaskManager.get().update_config("custom_rotatebet", latest)
+            update_result = TaskManager.get().update_config("custom_rotatebet", latest)
+            update_ok = update_result[0] if isinstance(update_result, tuple) else bool(update_result)
+            update_msg = update_result[1] if isinstance(update_result, tuple) and len(update_result) > 1 else ""
+            if not update_ok and update_msg not in ("", "任务未运行"):
+                reason = update_msg or "运行中配置更新被拒绝"
+                if _BLOCKED_REASONS.get("__config__") != reason:
+                    log(f"运行中配置更新被拒绝：{reason}")
+                    _BLOCKED_REASONS["__config__"] = reason
+                _sleep_interruptible(5, stop_event)
+                continue
+            _BLOCKED_REASONS.pop("__config__", None)
         except Exception:
             pass
 

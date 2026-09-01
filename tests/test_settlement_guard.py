@@ -13,6 +13,7 @@ from services.settlement_guard import (
     read_stable_draw,
 )
 from services.rotate_bet_svc import _PathState, _observe_entry_draw, _parse_enabled_positions
+import services.custom_rotate_bet_svc as custom_rotate_bet_svc
 from services.custom_rotate_bet_svc import (
     _CustomAmountPathState,
     _observe_entry_draw as _custom_observe_entry_draw,
@@ -224,11 +225,33 @@ def test_custom_rotate_single_account_stop():
         _ACCOUNT_STOPS.clear()
         _MANUALLY_STOPPED.clear()
 
+
+def test_custom_rotate_new_account_port_guard():
+    print("[10] custom rotate new account occupied port guard")
+    calls = []
+    original_port_in_use = custom_rotate_bet_svc._port_in_use
+    original_free_port = custom_rotate_bet_svc._free_port
+    try:
+        custom_rotate_bet_svc._port_in_use = lambda port: True
+        custom_rotate_bet_svc._free_port = lambda port, log=None: calls.append(port)
+        try:
+            custom_rotate_bet_svc._prepare_launch_port(9555, True, lambda _msg: None)
+            check(False, "new account occupied port raises")
+        except RuntimeError as exc:
+            check("9555" in str(exc) and "已被占用" in str(exc), "new account reports occupied port")
+        check(calls == [], "new account occupied port does not clear the port")
+
+        custom_rotate_bet_svc._prepare_launch_port(9555, False, lambda _msg: None)
+        check(calls == [9555], "initial account still clears stale occupied port")
+    finally:
+        custom_rotate_bet_svc._port_in_use = original_port_in_use
+        custom_rotate_bet_svc._free_port = original_free_port
+
 def main():
     print("=" * 56)
     print("settlement guard tests")
     print("=" * 56)
-    for fn in [test_issue_compare, test_stable_draw_reader, test_rotate_chase_amounts, test_rotate_entry_trigger_state, test_rotate_entry_observation_per_path, test_rotate_disabled_position_skips_observation, test_custom_rotate_amount_state_and_numbers, test_custom_rotate_entry_observation_per_path, test_custom_rotate_single_account_stop]:
+    for fn in [test_issue_compare, test_stable_draw_reader, test_rotate_chase_amounts, test_rotate_entry_trigger_state, test_rotate_entry_observation_per_path, test_rotate_disabled_position_skips_observation, test_custom_rotate_amount_state_and_numbers, test_custom_rotate_entry_observation_per_path, test_custom_rotate_single_account_stop, test_custom_rotate_new_account_port_guard]:
         fn()
     print("=" * 56)
     print("ALL OK")

@@ -1,7 +1,7 @@
 {
-  "version": "2026.09.01.2",
-  "url": "https://pub-465f078b4f484662b30eb39d27ae5155.r2.dev/releases/jianada-custom-rotatebet-2026.09.01.2.zip",
-  "sha256": "c4089284b9252b63d3885dcab9eacc499c498d4c543bb9c588e2b11556444782",
-  "notes": "Harden Windows auto-update restart and executable replacement.",
+  "version": "2026.09.01.3",
+  "url": "https://pub-465f078b4f484662b30eb39d27ae5155.r2.dev/releases/jianada-custom-rotatebet-2026.09.01.3.zip",
+  "sha256": "3f9ddb9d0538cfe48e0c8ad1e1274bc679ddfa4d3aff46b486d44d99a19e3ee5",
+  "notes": "Fix custom rotatebet new-account port guard and runtime resource updates.",
   "force": false
 }

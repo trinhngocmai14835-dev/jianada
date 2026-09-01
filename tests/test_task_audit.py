@@ -100,6 +100,12 @@ def test_resource_conflict_guards():
     ok, msg = tm.start("mode_a", target, {"accounts": [{"account": "acct1", "port": 9222}]})
     check(ok is True, "first resource owner starts")
 
+    ok, msg = tm.update_config("mode_a", {"accounts": [
+        {"account": "acct1", "port": 9222},
+        {"account": "acct3", "port": 9222},
+    ]})
+    check(ok is False and "9222" in msg, "running config update cannot duplicate port")
+    check(len(tm._tasks["mode_a"]["config"].get("accounts", [])) == 1, "rejected running config update keeps previous config")
     ok, msg = tm.start("mode_b", target, {"accounts": [{"account": "acct2", "port": 9222}]})
     check(ok is False and "9222" in msg, "second task cannot reuse running port")
 

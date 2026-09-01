@@ -131,9 +131,18 @@ class TaskManager:
         with self._lock:
             task = self._tasks.get(task_id)
             if task and self._refresh_locked(task_id, task) != "stopped":
-                task["config"] = dict(config or {})
-                return True
-        return False
+                cfg = dict(config or {})
+                duplicate_msg = self._duplicate_resource_msg(task_id, cfg)
+                if duplicate_msg:
+                    self._put_log(task["log_queue"], f"[审计] 运行中配置更新被拒绝 | 任务={task_id} | {duplicate_msg}", "warn")
+                    return False, duplicate_msg
+                conflict_msg = self._resource_conflict_msg_locked(task_id, cfg)
+                if conflict_msg:
+                    self._put_log(task["log_queue"], f"[审计] 运行中配置更新被拒绝 | 任务={task_id} | {conflict_msg}", "warn")
+                    return False, conflict_msg
+                task["config"] = cfg
+                return True, "配置已更新"
+        return False, "任务未运行"
 
     def start(self, task_id: str, target: Callable, config: dict):
         with self._lock:
