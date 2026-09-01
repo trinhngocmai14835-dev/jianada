@@ -35,7 +35,7 @@ echo PyArmor 加密完成
 
 :PACK
 echo [5/5] 打包 EXE...
-cd /d "%~dp0backend"
+cd /d "%~dp0"
 pip install pyinstaller -q
 
 for /f "delims=" %%i in ('python -c "import ddddocr,os;print(os.path.dirname(ddddocr.__file__))"') do set DDDDOCR_DIR=%%i
@@ -57,7 +57,7 @@ pyinstaller ^
   --onefile ^
   --noconsole ^
   --name "自动下单系统Pro" ^
-  --add-data "static;static" ^
+  --add-data "backend\static;static" ^
   "--add-data=%DDDDOCR_DIR%;ddddocr" ^
   "--add-data=%PW_PKG%\driver;playwright/driver" ^
   %EXTRA_DATA% ^
