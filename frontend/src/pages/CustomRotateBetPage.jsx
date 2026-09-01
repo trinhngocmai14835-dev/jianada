@@ -231,7 +231,7 @@ export default function CustomRotateBetPage() {
   ]
 
   const isRunning = status === 'running'
-  const saveButtonText = isRunning ? '保存并加入运行会话' : '仅保存配置'
+  const saveButtonText = isRunning ? '保存并运行新增账号' : '仅保存配置'
 
   return (
     <div style={{ padding: 24 }}>
