@@ -44,6 +44,8 @@ export const api = {
   saveRotateBetConfig: (data) => req('POST', '/config/rotatebet', data),
   getCustomRotateBetConfig: () => req('GET', '/config/custom-rotatebet'),
   saveCustomRotateBetConfig: (data) => req('POST', '/config/custom-rotatebet', data),
+  getMainTrendBetConfig: () => req('GET', '/config/main-trend-bet'),
+  saveMainTrendBetConfig: (data) => req('POST', '/config/main-trend-bet', data),
 
   // 状态
   getStatus: () => req('GET', '/status'),
@@ -69,6 +71,10 @@ export const api = {
   stopCustomRotateBet: () => req('POST', '/custom-rotatebet/stop'),
   getCustomRotateBetAccountStatuses: () => req('GET', '/custom-rotatebet/accounts/status'),
   stopCustomRotateBetAccount: (key) => req('POST', '/custom-rotatebet/accounts/stop', { key }),
+  startMainTrendBet: () => req('POST', '/main-trend-bet/start'),
+  stopMainTrendBet: () => req('POST', '/main-trend-bet/stop'),
+  getMainTrendBetAccountStatuses: () => req('GET', '/main-trend-bet/accounts/status'),
+  stopMainTrendBetAccount: (key) => req('POST', '/main-trend-bet/accounts/stop', { key }),
 
   // 投注流水
   getFlow: (account = '', mode = '', limit = 800) =>

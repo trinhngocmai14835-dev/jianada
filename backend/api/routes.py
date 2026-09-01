@@ -16,6 +16,11 @@ from services.custom_rotate_bet_svc import (
     get_account_statuses as custom_rotatebet_account_statuses,
     stop_account as stop_custom_rotatebet_account,
 )
+from services.main_trend_bet_svc import (
+    run as main_trend_bet_run,
+    get_account_statuses as main_trend_bet_account_statuses,
+    stop_account as stop_main_trend_bet_account,
+)
 from services.account_whitelist import get_account_whitelist_status, check_accounts_allowed
 from services.updater import check_for_update, get_update_install_status, start_update_install
 
@@ -28,6 +33,7 @@ TASK_LABELS = {
     "followbet": "多账号跟投",
     "rotatebet": "轮换追损",
     "custom_rotatebet": "自定义金额轮换追损",
+    "main_trend_bet": "主势大小单双追损",
 }
 
 
@@ -162,6 +168,15 @@ DEFAULT_CUSTOM_ROTATEBET = {
     "start_time": "09:00",
 }
 
+DEFAULT_MAIN_TREND_BET = {
+    **DEFAULT_ROTATEBET,
+    "amount_steps": [100, 130, 299, 389, 506],
+    "base_bet_amount": 100,
+    "entry_miss_trigger": 1,
+    "enabled_paths": [True, True],
+    "start_mode": "now",
+    "start_time": "09:00",
+}
 DEFAULT_FOLLOWBET = {
     "entry_url": "",
     "safe_code": "",           # 平台入口安全码（关键字），采集+所有跟投账号共用
@@ -361,6 +376,19 @@ def save_custom_rotatebet_config(data: dict):
     return {"ok": True}
 
 
+@router.get("/config/main-trend-bet")
+def get_main_trend_bet_config():
+    return _normalize_start_config({**DEFAULT_MAIN_TREND_BET, **get_config("main_trend_bet_config", {})}, DEFAULT_MAIN_TREND_BET["start_time"])
+
+
+@router.post("/config/main-trend-bet")
+def save_main_trend_bet_config(data: dict):
+    existing = get_config("main_trend_bet_config", DEFAULT_MAIN_TREND_BET)
+    existing.update(data)
+    existing = _normalize_start_config(existing, DEFAULT_MAIN_TREND_BET["start_time"])
+    set_config("main_trend_bet_config", existing)
+    return {"ok": True}
+
 @router.get("/status")
 def get_status():
     return _task_statuses()
@@ -498,6 +526,39 @@ def stop_custom_rotatebet_account_route(req: StopCustomRotateBetAccountRequest):
     ok, msg = stop_custom_rotatebet_account(req.key)
     return {"ok": ok, "message": msg}
 
+
+@router.post("/main-trend-bet/start")
+def start_main_trend_bet():
+    ok, msg = _check_license()
+    if not ok:
+        return {"ok": False, "message": msg}
+    cfg = _normalize_start_config({**DEFAULT_MAIN_TREND_BET, **get_config("main_trend_bet_config", {})}, DEFAULT_MAIN_TREND_BET["start_time"])
+    ok, msg = _check_account_whitelist("main_trend_bet", cfg)
+    if not ok:
+        return {"ok": False, "message": msg}
+    ok, msg = TaskManager.get().start("main_trend_bet", main_trend_bet_run, cfg)
+    return {"ok": ok, "message": msg}
+
+
+@router.post("/main-trend-bet/stop")
+def stop_main_trend_bet():
+    ok, msg = TaskManager.get().stop("main_trend_bet")
+    return {"ok": ok, "message": msg}
+
+
+@router.get("/main-trend-bet/accounts/status")
+def main_trend_bet_account_status():
+    return {"accounts": main_trend_bet_account_statuses()}
+
+
+class StopMainTrendBetAccountRequest(BaseModel):
+    key: str
+
+
+@router.post("/main-trend-bet/accounts/stop")
+def stop_main_trend_bet_account_route(req: StopMainTrendBetAccountRequest):
+    ok, msg = stop_main_trend_bet_account(req.key)
+    return {"ok": ok, "message": msg}
 
 @router.post("/followbet/start")
 def start_followbet():

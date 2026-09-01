@@ -13,7 +13,7 @@ const STATUS_TAG = {
 }
 
 export default function Dashboard({ licenseInfo }) {
-  const [status, setStatus] = useState({ autobet: 'stopped', rushbet: 'stopped', pickbet: 'stopped', followbet: 'stopped', custom_rotatebet: 'stopped' })
+  const [status, setStatus] = useState({ autobet: 'stopped', rushbet: 'stopped', pickbet: 'stopped', followbet: 'stopped', custom_rotatebet: 'stopped', main_trend_bet: 'stopped' })
   const [loading, setLoading] = useState({})
 
   const refresh = async () => {
@@ -41,6 +41,8 @@ export default function Dashboard({ licenseInfo }) {
         'followbet-stop': api.stopFollowBet,
         'custom-rotatebet-start': api.startCustomRotateBet,
         'custom-rotatebet-stop': api.stopCustomRotateBet,
+        'main-trend-bet-start': api.startMainTrendBet,
+        'main-trend-bet-stop': api.stopMainTrendBet,
       }[action]
       await fn()
       await refresh()
@@ -262,7 +264,43 @@ export default function Dashboard({ licenseInfo }) {
             </Space>
           </Card>
         </Col>
-
+        <Col xs={24} md={12}>
+          <Card
+            title={<Space><RetweetOutlined style={{ color: '#13c2c2' }} /><span>主势大小单双追损</span></Space>}
+            extra={STATUS_TAG[status.main_trend_bet] || STATUS_TAG.stopped}
+            style={{ borderRadius: 12, marginBottom: 24 }}
+          >
+            <Space direction="vertical" style={{ width: '100%' }} size={16}>
+              <Text type="secondary">主势盘大/小、单/双两路轮换，按自定义金额阶梯独立追损，支持运行中新增账号。</Text>
+              <Row gutter={16}>
+                <Col span={12}>
+                  <Statistic title="状态" value={status.main_trend_bet === 'running' ? '运行中' : '已停止'} />
+                </Col>
+              </Row>
+              <Space>
+                <Button
+                  type="primary"
+                  icon={<PlayCircleOutlined />}
+                  disabled={status.main_trend_bet === 'running'}
+                  loading={loading['main_trend_bet']}
+                  onClick={() => ctrl('main-trend-bet-start', 'main_trend_bet')}
+                  style={{ background: '#13c2c2', borderColor: '#13c2c2' }}
+                >
+                  启动
+                </Button>
+                <Button
+                  danger
+                  icon={<PauseCircleOutlined />}
+                  disabled={status.main_trend_bet === 'stopped'}
+                  loading={loading['main_trend_bet-stop']}
+                  onClick={() => ctrl('main-trend-bet-stop', 'main_trend_bet-stop')}
+                >
+                  停止
+                </Button>
+              </Space>
+            </Space>
+          </Card>
+        </Col>
       </Row>
 
       {/* 授权信息 */}

@@ -34,7 +34,7 @@ def _persist_flow(task_id, m):
 _subscribers: dict[str, set] = {}
 
 # 每个 task 保留最近 1000 条，每条带全局单调 seq
-_TASK_IDS = ["autobet", "rushbet", "pickbet", "followbet", "rotatebet", "custom_rotatebet"]
+_TASK_IDS = ["autobet", "rushbet", "pickbet", "followbet", "rotatebet", "custom_rotatebet", "main_trend_bet"]
 
 _history: dict[str, deque] = {tid: deque(maxlen=1000) for tid in _TASK_IDS}
 _seq: dict[str, int] = {tid: 0 for tid in _TASK_IDS}
