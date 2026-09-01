@@ -232,7 +232,8 @@ $log = {_ps_quote(log)}
 $expectedHash = '{expected_exe_hash.upper()}'
 $maxAttempts = 90
 $retryDelayMs = 1000
-$maxWaitSeconds = 180
+$graceSeconds = 8
+$forceWaitSeconds = 45
 function Write-UpdateLog($msg) {{
   Add-Content -LiteralPath $log -Value ("$(Get-Date -Format s) " + $msg) -Encoding UTF8
 }}
@@ -254,6 +255,15 @@ function Show-UpdateError($msg) {{
 function Restore-BackupIfNeeded {{
   if (!(Test-Path -LiteralPath $dst) -and (Test-Path -LiteralPath $backup)) {{
     Move-Item -LiteralPath $backup -Destination $dst -Force
+  }}
+}}
+function Stop-OldAppProcesses {{
+  $ids = @(Get-AppProcessIds | Where-Object {{ $_ -ne $PID }})
+  foreach ($id in $ids) {{
+    try {{
+      Write-UpdateLog ("force stopping app process " + $id)
+      Stop-Process -Id $id -Force -ErrorAction SilentlyContinue
+    }} catch {{}}
   }}
 }}
 function Replace-Executable {{
@@ -279,9 +289,19 @@ function Replace-Executable {{
 try {{
   Write-UpdateLog "waiting for old process"
   $waitStarted = Get-Date
-  while ((Get-Process -Id $pidToWait -ErrorAction SilentlyContinue) -or ((Get-AppProcessIds).Count -gt 0)) {{
-    if (((Get-Date) - $waitStarted).TotalSeconds -ge $maxWaitSeconds) {{
-      throw "old process still running after $maxWaitSeconds seconds"
+  while ((Get-Process -Id $pidToWait -ErrorAction SilentlyContinue) -and (((Get-Date) - $waitStarted).TotalSeconds -lt $graceSeconds)) {{
+    Start-Sleep -Milliseconds 500
+  }}
+  if (Get-Process -Id $pidToWait -ErrorAction SilentlyContinue) {{
+    Write-UpdateLog ("old process did not exit in " + $graceSeconds + " seconds, forcing pid " + $pidToWait)
+    Stop-Process -Id $pidToWait -Force -ErrorAction SilentlyContinue
+  }}
+
+  $forceStarted = Get-Date
+  while ((@(Get-AppProcessIds | Where-Object {{ $_ -ne $PID }})).Count -gt 0) {{
+    Stop-OldAppProcesses
+    if (((Get-Date) - $forceStarted).TotalSeconds -ge $forceWaitSeconds) {{
+      throw "old app process still running after $forceWaitSeconds seconds"
     }}
     Start-Sleep -Milliseconds 500
   }}
@@ -292,7 +312,8 @@ try {{
       Replace-Executable
       Write-UpdateLog "replace complete on attempt $attempt"
       Start-Sleep -Milliseconds 500
-      Start-Process -FilePath $dst
+      $dir = Split-Path -Parent $dst
+      Start-Process -FilePath $dst -WorkingDirectory $dir
       exit 0
     }} catch {{
       Restore-BackupIfNeeded
@@ -305,9 +326,9 @@ try {{
   $msg = "更新替换失败，请关闭所有 自动下单系统Pro 进程后重新打开旧版本再点更新。" + [Environment]::NewLine + $_.Exception.Message
   Write-UpdateLog ("replace failed: " + $_.Exception.Message)
   Show-UpdateError $msg
-  if ((Get-AppProcessIds).Count -eq 0) {{
-    if (Test-Path -LiteralPath $dst) {{ Start-Process -FilePath $dst }}
-    elseif (Test-Path -LiteralPath $backup) {{ Start-Process -FilePath $backup }}
+  if ((@(Get-AppProcessIds | Where-Object {{ $_ -ne $PID }})).Count -eq 0) {{
+    if (Test-Path -LiteralPath $dst) {{ Start-Process -FilePath $dst -WorkingDirectory (Split-Path -Parent $dst) }}
+    elseif (Test-Path -LiteralPath $backup) {{ Start-Process -FilePath $backup -WorkingDirectory (Split-Path -Parent $backup) }}
   }}
 }}
 """.lstrip()
@@ -315,10 +336,49 @@ try {{
     return script
 
 
+def _detached_creationflags() -> int:
+    flags = 0
+    for name in ("CREATE_NO_WINDOW", "CREATE_NEW_PROCESS_GROUP", "DETACHED_PROCESS"):
+        flags |= int(getattr(subprocess, name, 0) or 0)
+    return flags
+
+
+def _launch_helper_script(helper: Path, update_root: Path) -> None:
+    subprocess.Popen(
+        ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", str(helper)],
+        cwd=str(update_root),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        close_fds=True,
+        creationflags=_detached_creationflags(),
+    )
+
+
+def _spawn_exit_watchdog(pid: int, delay_seconds: float = 8) -> bool:
+    if os.name != "nt":
+        return False
+    delay = max(2, int(round(delay_seconds)))
+    command = f"timeout /t {delay} /nobreak >nul 2>nul & taskkill /PID {int(pid)} /F >nul 2>nul"
+    subprocess.Popen(
+        ["cmd.exe", "/d", "/c", command],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        close_fds=True,
+        creationflags=_detached_creationflags(),
+    )
+    return True
+
+
 def _exit_current_process_later() -> None:
     time.sleep(_TASK_EXIT_DELAY)
     os._exit(0)
 
+
+def _schedule_current_process_exit() -> None:
+    _spawn_exit_watchdog(os.getpid(), _TASK_EXIT_DELAY + 8)
+    threading.Thread(target=_exit_current_process_later, daemon=True).start()
 
 def prepare_update_install(progress_callback: Optional[Callable[..., None]] = None) -> Dict[str, Any]:
     _report(progress_callback, phase="checking", percent=2, message="正在检查更新...", current_version=APP_VERSION)
@@ -377,15 +437,9 @@ def prepare_update_install(progress_callback: Optional[Callable[..., None]] = No
         _report(progress_callback, phase="preparing", percent=96, message="正在准备替换程序...", latest_version=latest_version)
         new_exe = _find_update_exe(extract_dir)
         helper = _write_helper_script(update_root, new_exe, current_exe)
-        creationflags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
-        subprocess.Popen(
-            ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(helper)],
-            cwd=str(update_root),
-            close_fds=True,
-            creationflags=creationflags,
-        )
+        _launch_helper_script(helper, update_root)
         _report(progress_callback, phase="restarting", percent=100, message="更新包已下载，软件即将关闭并自动重启", latest_version=latest_version)
-        threading.Thread(target=_exit_current_process_later, daemon=True).start()
+        _schedule_current_process_exit()
         return {
             "ok": True,
             "message": "更新包已下载，软件即将关闭并自动重启",
