@@ -1,7 +1,7 @@
 {
-    "version":  "2026.08.25.3",
-    "url":  "https://pub-465f078b4f484662b30eb39d27ae5155.r2.dev/releases/autobet-pro-20260830-save-config-fix.zip",
-    "sha256":  "a0c485f6740e5fedfc95b615ae595a28523cb5410e85c267d249395efba2ad99",
-    "notes":  "基于 2026-08-25 更新进度版修复：赢冲输缩、轮换追损在安全码为空时点击仅保存配置会误报表单未填写；同时修复仅保存配置按钮误传点击事件导致 JSON 循环引用报错的问题。",
-    "force":  false
+  "version": "2026.09.01.1",
+  "url": "https://pub-465f078b4f484662b30eb39d27ae5155.r2.dev/releases/jianada-custom-rotatebet-2026.09.01.1.zip",
+  "sha256": "550b1e525150a4496ac845bacd5456ca8ef629e7045d7087f2f03f7ad4f46362",
+  "notes": "Custom rotate-loss mode, settled profit tracking, and runtime account onboarding.",
+  "force": false
 }
