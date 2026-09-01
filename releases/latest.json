@@ -1,7 +1,7 @@
 {
-  "version": "2026.09.01.1",
-  "url": "https://pub-465f078b4f484662b30eb39d27ae5155.r2.dev/releases/jianada-custom-rotatebet-2026.09.01.1.zip",
-  "sha256": "550b1e525150a4496ac845bacd5456ca8ef629e7045d7087f2f03f7ad4f46362",
-  "notes": "Custom rotate-loss mode, settled profit tracking, and runtime account onboarding.",
+  "version": "2026.09.01.2",
+  "url": "https://pub-465f078b4f484662b30eb39d27ae5155.r2.dev/releases/jianada-custom-rotatebet-2026.09.01.2.zip",
+  "sha256": "c4089284b9252b63d3885dcab9eacc499c498d4c543bb9c588e2b11556444782",
+  "notes": "Harden Windows auto-update restart and executable replacement.",
   "force": false
 }
