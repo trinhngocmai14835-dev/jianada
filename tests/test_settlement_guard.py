@@ -23,6 +23,7 @@ from services.custom_rotate_bet_svc import (
     _ACCOUNT_STOPS,
     _MANUALLY_STOPPED,
     _STATUS_LOCK,
+    _finalize_account,
     stop_account,
 )
 
@@ -43,6 +44,7 @@ class SequenceReader:
         return self.values.pop(0)
 
 
+
 def test_issue_compare():
     print("[1] issue compare")
     check(issue_num("issue 3451376") == 3451376, "extract issue number")
@@ -51,6 +53,7 @@ def test_issue_compare():
     check(is_newer_issue("3451375", "3451376") is False, "older issue rejected")
     check(issue_gap("3451378", "3451376") == 2, "issue gap calculated")
     check(issue_num("no issue") is None, "bad issue returns None")
+
 
 
 def test_stable_draw_reader():
@@ -75,6 +78,7 @@ def test_stable_draw_reader():
 
     bad = read_stable_draw(None, SequenceReader([("3451376", [1, 2])]), delay=0)
     check(bad is None, "incomplete draw rejected")
+
 
 
 def test_rotate_chase_amounts():
@@ -103,6 +107,7 @@ def test_rotate_chase_amounts():
           "hit keeps zero-trigger path in direct betting mode")
 
 
+
 def test_rotate_entry_trigger_state():
     print("[4] rotate entry trigger state")
     path = _PathState(base=100, multiplier=1.3, max_losses=5, entry_miss_trigger=2)
@@ -117,6 +122,7 @@ def test_rotate_entry_trigger_state():
 
     immediate = _PathState(base=100, multiplier=1.3, max_losses=5, entry_miss_trigger=0)
     check(immediate.active is True, "zero trigger keeps immediate betting compatibility")
+
 
 
 def test_rotate_entry_observation_per_path():
@@ -135,6 +141,7 @@ def test_rotate_entry_observation_per_path():
     check([p.active for p in paths] == [True, False, False], "only triggered path becomes active")
     check(paths[1].entry_loss_count == 0 and paths[2].entry_loss_count == 1,
           "other paths keep independent observation state")
+
 
 def test_rotate_disabled_position_skips_observation():
     print("[6] rotate disabled position skips observation")
@@ -158,6 +165,7 @@ def test_rotate_disabled_position_skips_observation():
     check(paths[1].active is False and paths[1].entry_loss_count == 0,
           "disabled path keeps inactive observation state")
     check([p.set_idx for p in paths] == [1, 0, 1], "only enabled paths rotate during observation")
+
 
 
 def test_custom_rotate_amount_state_and_numbers():
@@ -188,6 +196,7 @@ def test_custom_rotate_amount_state_and_numbers():
     check(_parse_custom_number_sets(invalid_sets) is None, "custom number parser rejects non 4/5 groups")
 
 
+
 def test_custom_rotate_entry_observation_per_path():
     print("[8] custom rotate entry observation per path")
     number_sets = [([0, 1, 3, 5], [2, 4, 6, 7, 9]) for _ in range(3)]
@@ -202,6 +211,7 @@ def test_custom_rotate_entry_observation_per_path():
     activated = _custom_observe_entry_draw(paths, number_sets, [0, 2, 0], "acct", logs.append, rotate_after=True)
     check(activated == [0], "custom only one path activates after second miss")
     check([p.active for p in paths] == [True, False, False], "custom path activation is independent")
+
 
 
 def test_custom_rotate_single_account_stop():
@@ -221,6 +231,42 @@ def test_custom_rotate_single_account_stop():
     with _STATUS_LOCK:
         check(_ACCOUNT_STATUS[key]["status"] == "stopping", "single account status becomes stopping")
         check(key in _MANUALLY_STOPPED, "single account is marked manual stopped")
+        _ACCOUNT_STATUS.clear()
+        _ACCOUNT_STOPS.clear()
+        _MANUALLY_STOPPED.clear()
+
+
+def test_custom_rotate_account_finalize_marks_exit_as_manual_stop():
+    print("[10] custom rotate account finalize")
+    key = "acct@9222"
+    child_stop = threading.Event()
+    parent_stop = threading.Event()
+    with _STATUS_LOCK:
+        _ACCOUNT_STATUS.clear()
+        _ACCOUNT_STOPS.clear()
+        _MANUALLY_STOPPED.clear()
+        _ACCOUNT_STATUS[key] = {"key": key, "account": "acct", "port": 9222, "status": "running"}
+        _ACCOUNT_STOPS[key] = child_stop
+
+    _finalize_account(key, parent_stop)
+
+    with _STATUS_LOCK:
+        check(key in _MANUALLY_STOPPED, "custom natural account exit should not auto restart")
+        check(key not in _ACCOUNT_STOPS, "custom finalize removes child stop handle")
+        check(_ACCOUNT_STATUS[key]["status"] == "stopped", "custom normal exit status becomes stopped")
+        _ACCOUNT_STATUS.clear()
+        _ACCOUNT_STOPS.clear()
+        _MANUALLY_STOPPED.clear()
+
+    parent_stop.set()
+    with _STATUS_LOCK:
+        _ACCOUNT_STATUS[key] = {"key": key, "account": "acct", "port": 9222, "status": "running"}
+        _ACCOUNT_STOPS[key] = threading.Event()
+
+    _finalize_account(key, parent_stop)
+
+    with _STATUS_LOCK:
+        check(key not in _MANUALLY_STOPPED, "custom global stop should not mark manual stop")
         _ACCOUNT_STATUS.clear()
         _ACCOUNT_STOPS.clear()
         _MANUALLY_STOPPED.clear()
@@ -251,7 +297,7 @@ def main():
     print("=" * 56)
     print("settlement guard tests")
     print("=" * 56)
-    for fn in [test_issue_compare, test_stable_draw_reader, test_rotate_chase_amounts, test_rotate_entry_trigger_state, test_rotate_entry_observation_per_path, test_rotate_disabled_position_skips_observation, test_custom_rotate_amount_state_and_numbers, test_custom_rotate_entry_observation_per_path, test_custom_rotate_single_account_stop, test_custom_rotate_new_account_port_guard]:
+    for fn in [test_issue_compare, test_stable_draw_reader, test_rotate_chase_amounts, test_rotate_entry_trigger_state, test_rotate_entry_observation_per_path, test_rotate_disabled_position_skips_observation, test_custom_rotate_amount_state_and_numbers, test_custom_rotate_entry_observation_per_path, test_custom_rotate_single_account_stop, test_custom_rotate_account_finalize_marks_exit_as_manual_stop, test_custom_rotate_new_account_port_guard]:
         fn()
     print("=" * 56)
     print("ALL OK")

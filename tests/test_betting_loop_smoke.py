@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.join(ROOT, "backend"))
 
 import services.rotate_bet_svc as rotate
 import services.custom_rotate_bet_svc as custom_rotate
+import services.main_trend_bet_svc as main_trend
 import services.rush_bet_svc as rush
 
 
@@ -23,6 +24,7 @@ def check(cond, msg):
 
 class FakePage:
     pass
+
 
 
 def test_rotate_loop_chase_after_miss():
@@ -94,6 +96,7 @@ def test_rotate_loop_chase_after_miss():
     check(any("未中" in m and "下把注码=13" in m for m in logs), "miss log shows next chase amount")
 
 
+
 def test_rotate_late_window_bets_immediately():
     print("[2] rotate late window bets immediately")
     stop = threading.Event()
@@ -145,6 +148,7 @@ def test_rotate_late_window_bets_immediately():
 
     check(len(calls) == 1, "no close buffer still attempts late bet")
     check(any("立即下注" in m for m in logs), "late window does not wait random delay")
+
 
 
 def test_custom_rotate_loop_uses_custom_amount_steps():
@@ -211,6 +215,68 @@ def test_custom_rotate_loop_uses_custom_amount_steps():
     check(len(calls) == 2, "custom loop place_bet called twice")
     check(calls[0][1] == [10, 10, 10], "custom first bet uses first tier")
     check(calls[1][1] == [10, 30, 10], "custom second bet advances only missed ball")
+
+def test_main_trend_loop_chases_after_special_sum():
+    print("[4] main trend loop chases after special sum")
+    stop = threading.Event()
+    calls = []
+    logs = []
+    state = {"placed": 0}
+
+    old = {
+        "balance": main_trend._get_balance,
+        "settled_balance": main_trend._get_settled_balance,
+        "countdown": main_trend._get_countdown,
+        "place": main_trend._place_main_trend_bet,
+        "sleep_interruptible": main_trend._sleep_interruptible,
+        "sleep": main_trend.time.sleep,
+        "read_stable_draw": main_trend.read_stable_draw,
+    }
+
+    def fake_draw(page, reader):
+        if state["placed"] >= 1:
+            return "101", [4, 4, 5]  # sum 13: 小/单, special odds 1.6
+        return "100", [0, 0, 0]
+
+    def fake_place(page, target_amounts, log, account):
+        calls.append(dict(target_amounts))
+        state["placed"] += 1
+        if state["placed"] >= 2:
+            stop.set()
+        return True, {"大": 2.05, "小": 2.05, "单": 2.05, "双": 2.05}
+
+    try:
+        main_trend._get_balance = lambda page: 1000
+        main_trend._get_settled_balance = lambda page, samples=3, interval=0.35: 1000
+        main_trend._get_countdown = lambda page: 50
+        main_trend._place_main_trend_bet = fake_place
+        main_trend._sleep_interruptible = lambda seconds, stop_event: None
+        main_trend.time.sleep = lambda seconds: None
+        main_trend.read_stable_draw = fake_draw
+
+        main_trend._betting_loop(FakePage(), "acct", {
+            "amount_steps": [10, 20, 30],
+            "entry_miss_trigger": 0,
+            "enabled_paths": [True, True],
+            "bet_window_max": 90,
+            "draw_delay": 73,
+            "daily_stop_loss": 999999,
+            "take_profit": 999999,
+        }, stop, logs.append)
+    finally:
+        main_trend._get_balance = old["balance"]
+        main_trend._get_settled_balance = old["settled_balance"]
+        main_trend._get_countdown = old["countdown"]
+        main_trend._place_main_trend_bet = old["place"]
+        main_trend._sleep_interruptible = old["sleep_interruptible"]
+        main_trend.time.sleep = old["sleep"]
+        main_trend.read_stable_draw = old["read_stable_draw"]
+
+    check(len(calls) == 2, "main trend place called twice")
+    check(calls[0] == {"大": 10, "单": 10}, "first main trend bet uses 大/单 first tier")
+    check(calls[1] == {"小": 20, "双": 10}, "sum 13 makes 大 lose to second tier and 单 reset first tier")
+    check(any("结算赔率=1.6" in m for m in logs), "sum 13 winning path logs special odds")
+
 
 def test_fixed_rush_virtual_then_real_inherits_step():
     print("[2] fixed rush virtual trigger then real bet")
@@ -291,7 +357,7 @@ def main():
     print("=" * 56)
     print("betting loop smoke tests")
     print("=" * 56)
-    for fn in [test_rotate_loop_chase_after_miss, test_rotate_late_window_bets_immediately, test_custom_rotate_loop_uses_custom_amount_steps, test_fixed_rush_virtual_then_real_inherits_step]:
+    for fn in [test_rotate_loop_chase_after_miss, test_rotate_late_window_bets_immediately, test_custom_rotate_loop_uses_custom_amount_steps, test_main_trend_loop_chases_after_special_sum, test_fixed_rush_virtual_then_real_inherits_step]:
         fn()
     print("=" * 56)
     print("ALL OK")

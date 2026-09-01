@@ -204,6 +204,20 @@ def stop_account(key: str):
     return True, "正在单独停止账号..."
 
 
+
+
+def _finalize_account(key: str, parent_stop: threading.Event):
+    with _STATUS_LOCK:
+        _ACCOUNT_STOPS.pop(key, None)
+        if not parent_stop.is_set():
+            _MANUALLY_STOPPED.add(key)
+        current = _ACCOUNT_STATUS.get(key, {"key": key})
+        if current.get("status") != "error":
+            current["status"] = "stopped"
+            current["message"] = "已停止"
+            _ACCOUNT_STATUS[key] = current
+
+
 def _parse_amount_steps(raw, fallback_base=100):
     if isinstance(raw, str):
         raw = re.split(r"[\s,，]+", raw.strip())
@@ -232,6 +246,7 @@ def _clean_nums(raw):
         if 0 <= value <= 9 and value not in out:
             out.append(value)
     return out
+
 
 
 def _parse_custom_number_sets(raw):
@@ -589,13 +604,7 @@ def _run_account(acc_info, config, entry_url, safe_code, chrome_path, parent_sto
         _set_account_status(key, status="error", message=message)
         log(f"[{account}] 启动失败: {message}")
     finally:
-        with _STATUS_LOCK:
-            _ACCOUNT_STOPS.pop(key, None)
-            current = _ACCOUNT_STATUS.get(key, {"key": key})
-            if current.get("status") != "error":
-                current["status"] = "stopped"
-                current["message"] = "已停止"
-                _ACCOUNT_STATUS[key] = current
+        _finalize_account(key, parent_stop)
 
 
 def run(config: dict, stop_event: threading.Event, log_queue: queue.Queue):
@@ -641,6 +650,13 @@ def run(config: dict, stop_event: threading.Event, log_queue: queue.Queue):
             pass
 
         accounts = latest.get("accounts", []) if isinstance(latest, dict) else []
+        configured_keys = {
+            _account_key(acc_info)
+            for acc_info in accounts
+            if isinstance(acc_info, dict) and _account_key(acc_info)
+        }
+        with _STATUS_LOCK:
+            _MANUALLY_STOPPED.intersection_update(configured_keys)
         if not accounts:
             log("未配置账号，请先添加账号")
             _sleep_interruptible(5, stop_event)

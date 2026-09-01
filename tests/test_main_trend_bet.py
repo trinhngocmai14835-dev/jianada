@@ -1,17 +1,23 @@
-﻿import os
+import os
 import sys
+import threading
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.join(ROOT, "backend"))
 
 from services.main_trend_bet_svc import (  # noqa: E402
     TARGET_INPUT_IDS,
+    _ACCOUNT_STATUS,
+    _ACCOUNT_STOPS,
+    _MANUALLY_STOPPED,
+    _STATUS_LOCK,
     _CustomAmountPathState,
     _main_trend_result,
     _observe_entry_draw,
     _parse_enabled_paths,
     _settlement_odds,
     _target_hit,
+    _finalize_account,
 )
 
 
@@ -81,11 +87,56 @@ def test_enabled_paths_and_dom_ids():
     check(TARGET_INPUT_IDS == {"大": "odds_DX1", "小": "odds_DX2", "单": "odds_DS3", "双": "odds_DS4"}, "main trend input ids")
 
 
+
+def test_account_finalize_marks_exit_as_manual_stop():
+    key = "acct@9222"
+    child_stop = threading.Event()
+    parent_stop = threading.Event()
+    with _STATUS_LOCK:
+        _ACCOUNT_STATUS.clear()
+        _ACCOUNT_STOPS.clear()
+        _MANUALLY_STOPPED.clear()
+        _ACCOUNT_STATUS[key] = {"key": key, "account": "acct", "port": 9222, "status": "running"}
+        _ACCOUNT_STOPS[key] = child_stop
+
+    _finalize_account(key, parent_stop)
+
+    with _STATUS_LOCK:
+        check(key in _MANUALLY_STOPPED, "natural account exit should not auto restart")
+        check(key not in _ACCOUNT_STOPS, "finalize removes child stop handle")
+        check(_ACCOUNT_STATUS[key]["status"] == "stopped", "normal exit status becomes stopped")
+        _ACCOUNT_STATUS.clear()
+        _ACCOUNT_STOPS.clear()
+        _MANUALLY_STOPPED.clear()
+
+
+def test_account_finalize_keeps_all_stop_clean():
+    key = "acct@9222"
+    parent_stop = threading.Event()
+    parent_stop.set()
+    with _STATUS_LOCK:
+        _ACCOUNT_STATUS.clear()
+        _ACCOUNT_STOPS.clear()
+        _MANUALLY_STOPPED.clear()
+        _ACCOUNT_STATUS[key] = {"key": key, "account": "acct", "port": 9222, "status": "running"}
+        _ACCOUNT_STOPS[key] = threading.Event()
+
+    _finalize_account(key, parent_stop)
+
+    with _STATUS_LOCK:
+        check(key not in _MANUALLY_STOPPED, "global stop should not mark account as manually stopped")
+        check(_ACCOUNT_STATUS[key]["status"] == "stopped", "global stop still marks status stopped")
+        _ACCOUNT_STATUS.clear()
+        _ACCOUNT_STOPS.clear()
+        _MANUALLY_STOPPED.clear()
+
 def main():
     test_main_trend_edges()
     test_independent_paths_and_entry_rotation()
     test_amount_steps_and_reset()
     test_enabled_paths_and_dom_ids()
+    test_account_finalize_marks_exit_as_manual_stop()
+    test_account_finalize_keeps_all_stop_clean()
     print("test_main_trend_bet: OK")
 
 

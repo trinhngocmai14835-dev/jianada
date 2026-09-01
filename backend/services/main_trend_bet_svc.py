@@ -91,6 +91,19 @@ def stop_account(key: str):
     return True, "正在单独停止账号..."
 
 
+
+def _finalize_account(key: str, parent_stop: threading.Event):
+    with _STATUS_LOCK:
+        _ACCOUNT_STOPS.pop(key, None)
+        if not parent_stop.is_set():
+            _MANUALLY_STOPPED.add(key)
+        current = _ACCOUNT_STATUS.get(key, {"key": key})
+        if current.get("status") != "error":
+            current["status"] = "stopped"
+            current["message"] = "已停止"
+            _ACCOUNT_STATUS[key] = current
+
+
 def _parse_enabled_paths(raw):
     if not isinstance(raw, (list, tuple)):
         return [True, True]
@@ -148,6 +161,7 @@ def _result_desc(draw) -> str:
 
 def _target_for_path(path_index: int, set_idx: int) -> str:
     return PATH_TARGETS[path_index][set_idx % 2]
+
 
 
 def _parse_odds_text(text):
@@ -629,13 +643,7 @@ def _run_account(acc_info, config, entry_url, safe_code, chrome_path, parent_sto
         _set_account_status(key, status="error", message=message)
         log(f"[{account}] 启动失败: {message}")
     finally:
-        with _STATUS_LOCK:
-            _ACCOUNT_STOPS.pop(key, None)
-            current = _ACCOUNT_STATUS.get(key, {"key": key})
-            if current.get("status") != "error":
-                current["status"] = "stopped"
-                current["message"] = "已停止"
-                _ACCOUNT_STATUS[key] = current
+        _finalize_account(key, parent_stop)
 
 
 def run(config: dict, stop_event: threading.Event, log_queue: queue.Queue):
