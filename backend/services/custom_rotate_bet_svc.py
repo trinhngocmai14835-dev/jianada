@@ -27,6 +27,7 @@ from services.rotate_bet_svc import (
     _parse_enabled_positions,
     _parse_entry_miss_trigger,
     _parse_hhmm,
+    _parse_risk_limit,
     _wait_until_start,
 )
 from services.settlement_guard import issue_gap, is_newer_issue, read_stable_draw
@@ -319,8 +320,8 @@ def _wait_for_next_cycle(page, account, stop_event, log):
 
 
 def _betting_loop(page, account, cfg, stop_event, log):
-    stop_loss = cfg.get("daily_stop_loss", 29000)
-    take_profit = cfg.get("take_profit", 25000)
+    stop_loss = _parse_risk_limit(cfg.get("daily_stop_loss", 29000), 29000)
+    take_profit = _parse_risk_limit(cfg.get("take_profit", 25000), 25000)
     base_bet = int(cfg.get("base_bet_amount", 100))
     amount_steps = _parse_amount_steps(cfg.get("amount_steps"), base_bet)
     entry_misses = _parse_entry_miss_trigger(cfg.get("entry_miss_trigger", 1))
@@ -335,7 +336,11 @@ def _betting_loop(page, account, cfg, stop_event, log):
         log(f"[{account}] 错误：至少需要启用一路球，当前三路都已关闭")
         return
 
-    start_balance = _get_settled_balance(page) or _get_balance(page) or 0
+    start_balance = _get_settled_balance(page)
+    if start_balance is None:
+        start_balance = _get_balance(page)
+    if start_balance is None:
+        start_balance = 0
     settled_balance = start_balance
     initial_draw = read_stable_draw(page, _get_last_draw_with_issue)
     last_issue = initial_draw[0] if initial_draw else None
