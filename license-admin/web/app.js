@@ -133,10 +133,59 @@ function expiryDisplay(expiry) {
   return `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`;
 }
 
-function compactExpiry(dateValue) {
-  return String(dateValue || "").replaceAll("-", "");
+function parseExpiryDate(value) {
+  const raw = String(value || "").trim();
+  const match = raw.match(/^(\d{4})-?(\d{2})-?(\d{2})$/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(year, month - 1, day);
+  date.setHours(0, 0, 0, 0);
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) {
+    return null;
+  }
+  return date;
 }
 
+function formatDateInput(date) {
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-");
+}
+
+function compactExpiry(dateValue) {
+  const parsed = parseExpiryDate(dateValue);
+  return parsed ? formatDateInput(parsed).replaceAll("-", "") : "";
+}
+
+function addDays(date, days) {
+  const copy = new Date(date.getTime());
+  copy.setDate(copy.getDate() + days);
+  return copy;
+}
+
+function extensionBaseDate(expiryValue) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const current = parseExpiryDate(expiryValue);
+  return current && current > today ? current : today;
+}
+
+function machineFormFromTarget(target) {
+  return target.closest(".machine-form") || target.closest(".machine-card")?.querySelector(".machine-form") || null;
+}
+
+function machineFormPayload(form) {
+  return {
+    expiry: compactExpiry(form?.elements?.expiry?.value),
+    enabled: form?.elements?.enabled?.value === "true",
+    accounts: splitAccounts(form?.elements?.accounts?.value),
+    remark: form?.elements?.remark?.value || "",
+  };
+}
 function splitAccounts(value) {
   return String(value || "")
     .split(/[\s,，]+/)
@@ -259,7 +308,10 @@ function renderCustomerDetail(customer) {
     ${(customer.machines || []).map(renderMachineCard).join("") || `<div class="empty">还没有绑定机器码。</div>`}
     ${state.generatedLicense ? `
       <div style="height:14px"></div>
-      <strong>最近生成的授权码</strong>
+      <div class="result-header">
+        <strong>最近生成的授权码</strong>
+        <button class="btn slim" type="button" data-action="copy-license">复制授权码</button>
+      </div>
       <pre class="code">${escapeHtml(state.generatedLicense)}</pre>
     ` : ""}
     ${state.r2Record ? `
@@ -287,17 +339,27 @@ function renderMachineCard(machine) {
       ${renderR2Status(machine)}
       <form class="machine-form form-grid" data-machine="${machine.machine_id}">
         <label>到期日期<input name="expiry" type="date" value="${escapeAttr(dateValue)}"></label>
+        <label>延期天数<input name="extend_days" type="number" min="1" step="1" value="30"></label>
         <label>状态
           <select name="enabled">
             <option value="true" ${machine.enabled ? "selected" : ""}>启用</option>
             <option value="false" ${!machine.enabled ? "selected" : ""}>停用</option>
           </select>
         </label>
+        <div class="extend-panel full">
+          <div class="muted small">续期从当前到期日往后加；如果已经过期，则从今天开始加。生成后把授权码发给客户重新激活。</div>
+          <div class="actions tight">
+            <button class="btn" type="button" data-action="extend-license" data-days="7" data-machine="${machine.machine_id}">延长 7 天</button>
+            <button class="btn" type="button" data-action="extend-license" data-days="30" data-machine="${machine.machine_id}">延长 30 天</button>
+            <button class="btn" type="button" data-action="extend-license" data-days="90" data-machine="${machine.machine_id}">延长 90 天</button>
+            <button class="btn primary" type="button" data-action="extend-license" data-machine="${machine.machine_id}">按填写天数延期并生成授权码</button>
+          </div>
+        </div>
         <label class="full">白名单账号<textarea name="accounts" placeholder="多个账号用空格分开">${escapeHtml(accountsText)}</textarea></label>
         <label class="full">备注<input name="remark" value="${escapeAttr(machine.remark || "")}"></label>
         <div class="actions full">
           <button class="btn primary" type="submit">保存机器码</button>
-          <button class="btn" type="button" data-action="license" data-machine="${machine.machine_id}">生成授权码</button>
+          <button class="btn" type="button" data-action="license" data-machine="${machine.machine_id}">按到期日生成授权码</button>
           <button class="btn" type="button" data-action="sync-r2" data-machine="${machine.machine_id}">同步到 R2</button>
           <button class="btn" type="button" data-action="view-r2" data-machine="${machine.machine_id}">验证公开 R2</button>
         </div>
@@ -341,13 +403,7 @@ document.addEventListener("submit", async (event) => {
 
   if (event.target.classList.contains("machine-form")) {
     const machineId = event.target.dataset.machine;
-    const form = Object.fromEntries(new FormData(event.target).entries());
-    const payload = {
-      expiry: compactExpiry(form.expiry),
-      enabled: form.enabled === "true",
-      accounts: splitAccounts(form.accounts),
-      remark: form.remark,
-    };
+    const payload = machineFormPayload(event.target);
     if (state.demo) {
       const machine = selectedCustomer().machines.find((m) => m.machine_id === machineId);
       Object.assign(machine, payload);
@@ -434,19 +490,69 @@ document.addEventListener("click", async (event) => {
 
   if (action === "license") {
     const machineId = target.dataset.machine;
+    const form = machineFormFromTarget(target);
+    const payload = machineFormPayload(form);
+    if (!payload.expiry) {
+      setMessage("请先选择到期日期，再生成授权码");
+      return;
+    }
     if (state.demo) {
       const machine = selectedCustomer().machines.find((m) => m.machine_id === machineId);
-      const expiry = machine.expiry || "20260916";
-      state.generatedLicense = `${expiry}.DEMO_SIGNATURE_ONLY_CONFIGURE_CLOUDFLARE_SECRET_FOR_REAL_SIGNING`;
-      setMessage("演示模式：已生成示例授权码");
+      machine.expiry = payload.expiry;
+      state.generatedLicense = `${payload.expiry}.DEMO_SIGNATURE_ONLY_CONFIGURE_CLOUDFLARE_SECRET_FOR_REAL_SIGNING`;
+      setMessage(`演示模式：已按到期 ${expiryDisplay(payload.expiry)} 生成示例授权码`);
       render();
       return;
     }
     try {
-      const data = await api(`/api/machines/${machineId}/license`, { method: "POST", body: JSON.stringify({}) });
+      const data = await api(`/api/machines/${machineId}/license`, {
+        method: "POST",
+        body: JSON.stringify({ expiry: payload.expiry }),
+      });
       state.generatedLicense = data.license_key;
-      setMessage("授权码已生成");
+      await loadCustomers();
+      setMessage(`授权码已生成，到期 ${expiryDisplay(data.expiry)}。复制后发给客户重新激活`);
+    } catch (error) {
+      setMessage(error.message);
+    }
+  }
+
+  if (action === "extend-license") {
+    const machineId = target.dataset.machine;
+    const form = machineFormFromTarget(target);
+    const buttonDays = Number(target.dataset.days || 0);
+    const inputDays = Number(form?.elements?.extend_days?.value || 0);
+    const days = Math.round(buttonDays || inputDays);
+    if (!machineId || !form) {
+      setMessage("未找到机器码表单");
+      return;
+    }
+    if (!Number.isFinite(days) || days < 1) {
+      setMessage("延期天数必须大于 0");
+      return;
+    }
+
+    const nextDate = addDays(extensionBaseDate(form.elements.expiry?.value), days);
+    form.elements.expiry.value = formatDateInput(nextDate);
+    const expiry = compactExpiry(form.elements.expiry.value);
+
+    if (state.demo) {
+      const machine = selectedCustomer().machines.find((m) => m.machine_id === machineId);
+      machine.expiry = expiry;
+      state.generatedLicense = `${expiry}.DEMO_SIGNATURE_ONLY_CONFIGURE_CLOUDFLARE_SECRET_FOR_REAL_SIGNING`;
+      setMessage(`演示模式：已延期 ${days} 天，到期 ${expiryDisplay(expiry)}`);
       render();
+      return;
+    }
+
+    try {
+      const data = await api(`/api/machines/${machineId}/license`, {
+        method: "POST",
+        body: JSON.stringify({ expiry, days }),
+      });
+      state.generatedLicense = data.license_key;
+      await loadCustomers();
+      setMessage(`已延期 ${days} 天并生成授权码，到期 ${expiryDisplay(data.expiry)}。复制后发给客户重新激活`);
     } catch (error) {
       setMessage(error.message);
     }
@@ -498,6 +604,16 @@ document.addEventListener("click", async (event) => {
     state.demo = false;
     state.customers = [];
     render();
+  }
+
+  if (action === "copy-license") {
+    if (!state.generatedLicense) return;
+    try {
+      await navigator.clipboard.writeText(state.generatedLicense);
+      setMessage("授权码已复制");
+    } catch {
+      setMessage("复制失败，请手动选中授权码复制");
+    }
   }
 });
 

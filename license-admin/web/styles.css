@@ -246,6 +246,10 @@ textarea {
   gap: 10px;
   margin-top: 14px;
 }
+.actions.tight {
+  gap: 8px;
+  margin-top: 10px;
+}
 
 .btn {
   border-radius: 8px;
@@ -268,6 +272,10 @@ textarea {
   background: #fff1f0;
   color: var(--danger);
 }
+.btn.slim {
+  padding: 6px 10px;
+  font-size: 12px;
+}
 
 .btn:disabled {
   opacity: 0.55;
@@ -288,6 +296,20 @@ textarea {
   justify-content: space-between;
   gap: 10px;
   margin-bottom: 12px;
+}
+.extend-panel {
+  border: 1px dashed #b8c7dc;
+  border-radius: 8px;
+  padding: 10px;
+  background: #f7fbff;
+}
+
+.result-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
 }
 
 .code {
