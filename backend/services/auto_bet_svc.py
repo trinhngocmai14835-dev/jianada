@@ -110,6 +110,87 @@ def _get_chrome() -> str | None:
 
 # ─── 登录流程 ────────────────────────────────────────────────
 
+_BROWSER_CLOSED_MARKERS = (
+    "Target page, context or browser has been closed",
+    "Browser has been closed",
+    "Target closed",
+)
+
+
+def _is_browser_closed_error(exc: Exception) -> bool:
+    msg = str(exc or "")
+    return any(marker in msg for marker in _BROWSER_CLOSED_MARKERS)
+
+
+def _page_is_closed(page) -> bool:
+    if page is None:
+        return True
+    try:
+        return page.is_closed()
+    except Exception:
+        return False
+
+
+def _page_url(page) -> str:
+    if _page_is_closed(page):
+        return ""
+    try:
+        return str(page.url or "")
+    except Exception:
+        return ""
+
+
+def _is_logged_in_url(url: str) -> bool:
+    return "/Home/Index" in (url or "") or "/Member/Agreement" in (url or "")
+
+
+def _accept_dialogs(page) -> None:
+    try:
+        page.on("dialog", lambda d: d.accept())
+    except Exception:
+        pass
+
+
+def _select_context_page(context, preferred=None):
+    if not _page_is_closed(preferred) and _is_logged_in_url(_page_url(preferred)):
+        return preferred
+
+    try:
+        pages = [p for p in context.pages if not _page_is_closed(p)]
+    except Exception:
+        pages = []
+
+    for candidate in reversed(pages):
+        if _is_logged_in_url(_page_url(candidate)):
+            return candidate
+    if not _page_is_closed(preferred):
+        return preferred
+    return pages[-1] if pages else None
+
+
+def _refresh_login_page(login_page, context, login_base: str, account: str, log):
+    page = _select_context_page(context, login_page)
+    if _is_logged_in_url(_page_url(page)):
+        return page
+
+    for fresh_attempt in range(2):
+        if _page_is_closed(page):
+            log(f"[{account}] 登录阶段 6/8：登录页已关闭，重新打开登录页后重试")
+            page = context.new_page()
+            _accept_dialogs(page)
+        try:
+            page.goto(login_base, wait_until="domcontentloaded", timeout=15000)
+            time.sleep(2)
+            return page
+        except Exception as exc:
+            if _is_browser_closed_error(exc) and fresh_attempt == 0:
+                log(f"[{account}] 登录阶段 6/8：登录页刷新时被关闭，重新打开登录页后重试")
+                page = None
+                continue
+            raise
+    return page
+
+
 def _login(
     page,
     context,
@@ -158,7 +239,7 @@ def _login(
                 np.close()
                 continue
             login_page = np
-            login_page.on("dialog", lambda d: d.accept())
+            _accept_dialogs(login_page)
             break
         except Exception as e:
             log(f"[{account}] 登录阶段 4/8：线路 {i + 1}/{count} 打开失败：{e}")
@@ -167,60 +248,91 @@ def _login(
     if not login_page:
         raise Exception(f"所有{line_kw}均被CF拦截")
 
-    log(f"[{account}] 登录阶段 5/8：进入登录页 {login_page.url[:60]}")
-    login_base = login_page.url.split("?")[0]
+    log(f"[{account}] 登录阶段 5/8：进入登录页 {_page_url(login_page)[:60]}")
+    login_base = _page_url(login_page).split("?")[0]
+    if not login_base:
+        raise RuntimeError("登录页地址获取失败")
 
+    logged_in = False
     for attempt in range(1, 9):
-        cur = login_page.url
-        if "/Home/Index" in cur or "/Member/Agreement" in cur:
-            break
-        log(f"[{account}] 登录阶段 6/8：第{attempt}次提交登录")
         try:
-            login_page.locator('input[name="account"]').wait_for(state="visible", timeout=5000)
-        except Exception:
-            log(f"[{account}] 登录阶段 6/8：登录框未出现，刷新登录页后重试")
-            login_page.goto(login_base, wait_until="domcontentloaded", timeout=15000)
-            time.sleep(2)
-            cur = login_page.url
-            if "/Home/Index" in cur or "/Member/Agreement" in cur:
+            login_page = _select_context_page(context, login_page)
+            cur = _page_url(login_page)
+            if _is_logged_in_url(cur):
+                logged_in = True
                 break
+
+            log(f"[{account}] 登录阶段 6/8：第{attempt}次提交登录")
             try:
-                login_page.locator('input[name="account"]').wait_for(state="visible", timeout=8000)
-            except Exception:
-                log(f"[{account}] 登录阶段 6/8：仍未找到登录框，进入下一次尝试")
+                login_page.locator('input[name="account"]').wait_for(state="visible", timeout=5000)
+            except Exception as exc:
+                if _is_browser_closed_error(exc):
+                    login_page = _refresh_login_page(login_page, context, login_base, account, log)
+                    continue
+
+                login_page = _select_context_page(context, login_page)
+                if _is_logged_in_url(_page_url(login_page)):
+                    logged_in = True
+                    break
+
+                log(f"[{account}] 登录阶段 6/8：登录框未出现，刷新登录页后重试")
+                login_page = _refresh_login_page(login_page, context, login_base, account, log)
+                cur = _page_url(login_page)
+                if _is_logged_in_url(cur):
+                    logged_in = True
+                    break
+                try:
+                    login_page.locator('input[name="account"]').wait_for(state="visible", timeout=8000)
+                except Exception as exc2:
+                    if _is_browser_closed_error(exc2):
+                        login_page = _refresh_login_page(login_page, context, login_base, account, log)
+                    else:
+                        log(f"[{account}] 登录阶段 6/8：仍未找到登录框，进入下一次尝试")
+                    continue
+
+            login_page.locator('input[name="account"]').fill(account)
+            login_page.locator('input[name="password"]').fill(password)
+            log(f"[{account}] 登录阶段 6/8：账号密码已填写，开始识别验证码")
+
+            captcha_img = login_page.locator('.code img, dt img, img[alt="none"]').first
+            captcha_img.wait_for(state="visible", timeout=5000)
+            time.sleep(0.5)
+            captcha_bytes = captcha_img.screenshot()
+            captcha_text = re.sub(r'[^a-zA-Z0-9]', '', _solve_captcha(captcha_bytes))
+
+            if len(captcha_text) < 3:
+                log(f"[{account}] 登录阶段 6/8：验证码识别失败，重试 ({attempt}/8)")
+                captcha_img.click()
+                time.sleep(1)
                 continue
 
-        login_page.locator('input[name="account"]').fill(account)
-        login_page.locator('input[name="password"]').fill(password)
-        log(f"[{account}] 登录阶段 6/8：账号密码已填写，开始识别验证码")
+            login_page.locator('input[name="code"]').fill(captcha_text)
+            log(f"[{account}] 登录阶段 6/8：验证码已填写，提交登录")
+            time.sleep(0.3)
+            try:
+                with login_page.expect_navigation(timeout=10000, wait_until="domcontentloaded"):
+                    login_page.locator('input.submit_btn').click()
+            except Exception as exc:
+                if _is_browser_closed_error(exc):
+                    login_page = _select_context_page(context, login_page)
+                # Some login pages update in-place or redirect without a navigation event.
+            time.sleep(2)
+            login_page = _select_context_page(context, login_page)
+            cur = _page_url(login_page)
+            if _is_logged_in_url(cur):
+                logged_in = True
+                break
+            log(f"[{account}] 第{attempt}次登录未成功，重试...")
+        except Exception as exc:
+            if _is_browser_closed_error(exc):
+                login_page = _refresh_login_page(login_page, context, login_base, account, log)
+                continue
+            raise
 
-        captcha_img = login_page.locator('.code img, dt img, img[alt="none"]').first
-        captcha_img.wait_for(state="visible", timeout=5000)
-        time.sleep(0.5)
-        captcha_bytes = captcha_img.screenshot()
-        captcha_text = re.sub(r'[^a-zA-Z0-9]', '', _solve_captcha(captcha_bytes))
+    if not logged_in and not _is_logged_in_url(_page_url(login_page)):
+        raise RuntimeError("登录失败：8次尝试后仍未进入首页，请检查账号密码、验证码或线路状态")
 
-        if len(captcha_text) < 3:
-            log(f"[{account}] 登录阶段 6/8：验证码识别失败，重试 ({attempt}/8)")
-            captcha_img.click()
-            time.sleep(1)
-            continue
-
-        login_page.locator('input[name="code"]').fill(captcha_text)
-        log(f"[{account}] 登录阶段 6/8：验证码已填写，提交登录")
-        time.sleep(0.3)
-        try:
-            with login_page.expect_navigation(timeout=10000, wait_until="domcontentloaded"):
-                login_page.locator('input.submit_btn').click()
-        except Exception:
-            pass
-        time.sleep(2)
-        cur = login_page.url
-        if "/Home/Index" in cur or "/Member/Agreement" in cur:
-            break
-        log(f"[{account}] 第{attempt}次登录未成功，重试...")
-
-    if "/Member/Agreement" in login_page.url:
+    if "/Member/Agreement" in _page_url(login_page):
         log(f"[{account}] 登录阶段 7/8：检测到协议页，点击同意")
         login_page.locator('a:has-text("同意")').first.click()
         login_page.wait_for_load_state("domcontentloaded", timeout=15000)
@@ -245,7 +357,7 @@ def _login(
         time.sleep(3)
     except Exception as e:
         log(f"[{account}] 登录阶段 8/8：未能自动进入{target_desc}页，继续使用当前页：{e}")
-    log(f"[{account}] 登录完成，当前页: {login_page.url[:60]}")
+    log(f"[{account}] 登录完成，当前页: {_page_url(login_page)[:60]}")
     return login_page
 # ─── 下注逻辑 ────────────────────────────────────────────────
 
