@@ -1,7 +1,8 @@
 {
-    "version":  "2026.09.02.1",
-    "url":  "https://pub-465f078b4f484662b30eb39d27ae5155.r2.dev/releases/jianada-custom-rotatebet-2026.09.02.1.zip",
-    "sha256":  "abb081a815cb7232ff4109841444a7d42201a2c016d9c809783434d8491a90ef",
-    "notes":  "Add main trend big/small odd/even rotate-loss mode and fix main trend page targeting, bet fill, draw total logs, and account restart guard.",
+    "version":  "2026.09.02.2",
+    "url":  "https://pub-465f078b4f484662b30eb39d27ae5155.r2.dev/releases/jianada-custom-rotatebet-2026.09.02.2.zip",
+    "sha256":  "7b51ad07e6af510b683139e7dddcc4476caf34e1104f303dbdffbeec674428fa",
+    "size":  245211073,
+    "notes":  "Fix rotate-loss and custom-amount take-profit/stop-loss checks to use settled balance only, avoiding false triggers while bets are pending settlement.",
     "force":  false
 }
