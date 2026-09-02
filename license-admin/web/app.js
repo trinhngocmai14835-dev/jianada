@@ -498,7 +498,7 @@ document.addEventListener("click", async (event) => {
     }
     if (state.demo) {
       const machine = selectedCustomer().machines.find((m) => m.machine_id === machineId);
-      machine.expiry = payload.expiry;
+      Object.assign(machine, payload);
       state.generatedLicense = `${payload.expiry}.DEMO_SIGNATURE_ONLY_CONFIGURE_CLOUDFLARE_SECRET_FOR_REAL_SIGNING`;
       setMessage(`演示模式：已按到期 ${expiryDisplay(payload.expiry)} 生成示例授权码`);
       render();
@@ -507,11 +507,12 @@ document.addEventListener("click", async (event) => {
     try {
       const data = await api(`/api/machines/${machineId}/license`, {
         method: "POST",
-        body: JSON.stringify({ expiry: payload.expiry }),
+        body: JSON.stringify(payload),
       });
       state.generatedLicense = data.license_key;
       await loadCustomers();
-      setMessage(`授权码已生成，到期 ${expiryDisplay(data.expiry)}。复制后发给客户重新激活`);
+      rememberR2(machineId, data.r2);
+      setMessage(r2ResultMessage(data.r2, `授权码已生成，到期 ${expiryDisplay(data.expiry)}。白名单已同步到 R2`, `授权码已生成，到期 ${expiryDisplay(data.expiry)}，但白名单同步 R2 失败`));
     } catch (error) {
       setMessage(error.message);
     }
@@ -538,7 +539,7 @@ document.addEventListener("click", async (event) => {
 
     if (state.demo) {
       const machine = selectedCustomer().machines.find((m) => m.machine_id === machineId);
-      machine.expiry = expiry;
+      Object.assign(machine, { ...machineFormPayload(form), expiry });
       state.generatedLicense = `${expiry}.DEMO_SIGNATURE_ONLY_CONFIGURE_CLOUDFLARE_SECRET_FOR_REAL_SIGNING`;
       setMessage(`演示模式：已延期 ${days} 天，到期 ${expiryDisplay(expiry)}`);
       render();
@@ -548,11 +549,12 @@ document.addEventListener("click", async (event) => {
     try {
       const data = await api(`/api/machines/${machineId}/license`, {
         method: "POST",
-        body: JSON.stringify({ expiry, days }),
+        body: JSON.stringify({ ...machineFormPayload(form), expiry, days }),
       });
       state.generatedLicense = data.license_key;
       await loadCustomers();
-      setMessage(`已延期 ${days} 天并生成授权码，到期 ${expiryDisplay(data.expiry)}。复制后发给客户重新激活`);
+      rememberR2(machineId, data.r2);
+      setMessage(r2ResultMessage(data.r2, `已延期 ${days} 天并生成授权码，到期 ${expiryDisplay(data.expiry)}。白名单已同步到 R2`, `已延期 ${days} 天并生成授权码，到期 ${expiryDisplay(data.expiry)}，但白名单同步 R2 失败`));
     } catch (error) {
       setMessage(error.message);
     }

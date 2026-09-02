@@ -65,8 +65,9 @@ Recommended steps:
 3. Use `延长 7 天`, `延长 30 天`, `延长 90 天`, or fill `延期天数` and click
    `按填写天数延期并生成授权码`.
 4. Click `复制授权码` and send the code to the customer.
-5. If account whitelist accounts were changed, click `保存机器码`; that save also
-   syncs the whitelist JSON to R2.
+5. The license generation buttons also save the current whitelist accounts and
+   sync the whitelist JSON to R2. Use `保存机器码` only when you want to change
+   whitelist accounts without generating a new license code.
 
 The `按到期日生成授权码` button now uses the date currently shown in the card, so
 an unsaved expiry date will not accidentally generate a code for the old stored
