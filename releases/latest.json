@@ -1,7 +1,7 @@
 {
-  "version": "2026.09.01.3",
-  "url": "https://pub-465f078b4f484662b30eb39d27ae5155.r2.dev/releases/jianada-custom-rotatebet-2026.09.01.3.zip",
-  "sha256": "3f9ddb9d0538cfe48e0c8ad1e1274bc679ddfa4d3aff46b486d44d99a19e3ee5",
-  "notes": "Fix custom rotatebet new-account port guard and runtime resource updates.",
-  "force": false
+    "version":  "2026.09.02.1",
+    "url":  "https://pub-465f078b4f484662b30eb39d27ae5155.r2.dev/releases/jianada-custom-rotatebet-2026.09.02.1.zip",
+    "sha256":  "abb081a815cb7232ff4109841444a7d42201a2c016d9c809783434d8491a90ef",
+    "notes":  "Add main trend big/small odd/even rotate-loss mode and fix main trend page targeting, bet fill, draw total logs, and account restart guard.",
+    "force":  false
 }
