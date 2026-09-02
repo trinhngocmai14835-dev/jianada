@@ -1,8 +1,8 @@
 {
-    "version":  "2026.09.02.2",
-    "url":  "https://pub-465f078b4f484662b30eb39d27ae5155.r2.dev/releases/jianada-custom-rotatebet-2026.09.02.2.zip",
-    "sha256":  "7b51ad07e6af510b683139e7dddcc4476caf34e1104f303dbdffbeec674428fa",
-    "size":  245211073,
-    "notes":  "Fix rotate-loss and custom-amount take-profit/stop-loss checks to use settled balance only, avoiding false triggers while bets are pending settlement.",
+    "version":  "2026.09.02.3",
+    "url":  "https://pub-465f078b4f484662b30eb39d27ae5155.r2.dev/releases/jianada-custom-rotatebet-2026.09.02.3.zip",
+    "sha256":  "d0fdc036678904d82b05c644099194b29bf13cd7b610c4a1afd021410b734ba1",
+    "size":  245218908,
+    "notes":  "Improve login recovery when the site closes or replaces the login page, and show a clearer account/login failure message after repeated failed attempts.",
     "force":  false
 }
