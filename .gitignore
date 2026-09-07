@@ -40,3 +40,4 @@ desktop.ini
 release_upload/
 cloudflare/**/.admin-token.local
 cloudflare/**/.worker-url.local
+releases/*.zip

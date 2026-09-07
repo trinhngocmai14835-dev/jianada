@@ -86,6 +86,7 @@ pyinstaller ^
   --hidden-import "core" ^
   --hidden-import "core.db" ^
   --hidden-import "core.license" ^
+  --hidden-import "core.process_env" ^
   --hidden-import "core.task_manager" ^
   --hidden-import "core.version" ^
   --hidden-import "services" ^
