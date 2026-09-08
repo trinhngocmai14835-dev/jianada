@@ -1,8 +1,8 @@
 {
-    "version":  "2026.09.07.1",
-    "url":  "https://pub-465f078b4f484662b30eb39d27ae5155.r2.dev/releases/jianada-custom-rotatebet-2026.09.07.1.zip",
-    "sha256":  "d68e21bf670f819cf66329c13ce9e47116ddaded6c51af72b117c027da349792",
-    "size":  245230693,
-    "notes":  "Improve automatic updates: avoid PyInstaller temporary directory cleanup warnings, launch update helpers in a clean environment, and tolerate UTF-8 BOM update manifests.",
+    "version":  "2026.09.08.1",
+    "url":  "https://pub-465f078b4f484662b30eb39d27ae5155.r2.dev/releases/jianada-custom-winbet-2026.09.08.1.zip",
+    "sha256":  "f96f64e5b3d7032b87adac0dd206fee32c8f2809fb214a0f4f12289cd3fe7e96",
+    "size":  245287277,
+    "notes":  "Add custom amount rotate-win mode with independent account risk limits, run-time account joining, and updated Windows client package.",
     "force":  false
 }
