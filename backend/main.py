@@ -5,6 +5,8 @@ import subprocess
 import shutil
 import glob
 
+from core.process_env import clean_subprocess_context, leave_pyinstaller_temp_cwd, sanitized_subprocess_env
+
 # --noconsole 模式下 stdout/stderr 为 None，uvicorn logging 会崩溃
 if sys.stdout is None:
     sys.stdout = open(os.devnull, "w")
@@ -45,14 +47,19 @@ def _msgbox(title: str, text: str, icon: int = 0x40):
         pass
 
 
+def _open_url(url: str) -> None:
+    import webbrowser
+    with clean_subprocess_context():
+        webbrowser.open(url)
+
+
 def _check_port(port: int = 8080):
     if not _port_in_use(port):
         return  # 端口空闲，正常启动
 
-    import webbrowser
     if _is_our_app(port):
         # 占用方就是本程序的另一个实例 —— 直接复用，打开界面而不是报错退出
-        webbrowser.open(f"http://localhost:{port}")
+        _open_url(f"http://localhost:{port}")
         _msgbox(
             "程序已在运行",
             "「自动下单系统Pro」已经在运行，已为你打开它的界面。\n\n"
@@ -149,13 +156,15 @@ def _install_pw_chromium():
     ok = False
     if node and cli:
         try:
-            proc = subprocess.Popen(
-                [node, cli, "install", "chromium"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-            )
+            with clean_subprocess_context():
+                proc = subprocess.Popen(
+                    [node, cli, "install", "chromium"],
+                    env=sanitized_subprocess_env(),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                )
             while True:
                 line = proc.stdout.readline()
                 if not line and proc.poll() is not None:
@@ -251,10 +260,11 @@ async def spa(full_path: str = ""):
 def _open_browser():
     import time
     time.sleep(1.8)
-    webbrowser.open("http://localhost:8080")
+    _open_url("http://localhost:8080")
 
 
 if __name__ == "__main__":
+    leave_pyinstaller_temp_cwd()
     _check_port()
     _ensure_browser()
     threading.Thread(target=_open_browser, daemon=True).start()

@@ -42,6 +42,12 @@ export const api = {
   saveFollowBetConfig: (data) => req('POST', '/config/followbet', data),
   getRotateBetConfig: () => req('GET', '/config/rotatebet'),
   saveRotateBetConfig: (data) => req('POST', '/config/rotatebet', data),
+  getCustomRotateBetConfig: () => req('GET', '/config/custom-rotatebet'),
+  saveCustomRotateBetConfig: (data) => req('POST', '/config/custom-rotatebet', data),
+  getCustomWinBetConfig: () => req('GET', '/config/custom-winbet'),
+  saveCustomWinBetConfig: (data) => req('POST', '/config/custom-winbet', data),
+  getMainTrendBetConfig: () => req('GET', '/config/main-trend-bet'),
+  saveMainTrendBetConfig: (data) => req('POST', '/config/main-trend-bet', data),
 
   // 状态
   getStatus: () => req('GET', '/status'),
@@ -63,6 +69,18 @@ export const api = {
   openFollowerBrowser: (port, entry_url) => req('POST', '/followbet/open-browser', { port: String(port), entry_url: entry_url || '' }),
   startRotateBet: () => req('POST', '/rotatebet/start'),
   stopRotateBet: () => req('POST', '/rotatebet/stop'),
+  startCustomRotateBet: () => req('POST', '/custom-rotatebet/start'),
+  stopCustomRotateBet: () => req('POST', '/custom-rotatebet/stop'),
+  getCustomRotateBetAccountStatuses: () => req('GET', '/custom-rotatebet/accounts/status'),
+  stopCustomRotateBetAccount: (key) => req('POST', '/custom-rotatebet/accounts/stop', { key }),
+  startCustomWinBet: () => req('POST', '/custom-winbet/start'),
+  stopCustomWinBet: () => req('POST', '/custom-winbet/stop'),
+  getCustomWinBetAccountStatuses: () => req('GET', '/custom-winbet/accounts/status'),
+  stopCustomWinBetAccount: (key) => req('POST', '/custom-winbet/accounts/stop', { key }),
+  startMainTrendBet: () => req('POST', '/main-trend-bet/start'),
+  stopMainTrendBet: () => req('POST', '/main-trend-bet/stop'),
+  getMainTrendBetAccountStatuses: () => req('GET', '/main-trend-bet/accounts/status'),
+  stopMainTrendBetAccount: (key) => req('POST', '/main-trend-bet/accounts/stop', { key }),
 
   // 投注流水
   getFlow: (account = '', mode = '', limit = 800) =>

@@ -1,4 +1,4 @@
-APP_VERSION = "2026.08.25.3"
+APP_VERSION = "2026.09.08.1"
 APP_DISPLAY_NAME = "自动下单系统Pro"
 APP_EXE_NAME = APP_DISPLAY_NAME + ".exe"
 UPDATE_MANIFEST_URL = "https://pub-465f078b4f484662b30eb39d27ae5155.r2.dev/releases/latest.json"

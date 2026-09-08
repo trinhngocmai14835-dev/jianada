@@ -35,7 +35,7 @@ echo PyArmor 加密完成
 
 :PACK
 echo [5/5] 打包 EXE...
-cd /d "%~dp0backend"
+cd /d "%~dp0"
 pip install pyinstaller -q
 
 for /f "delims=" %%i in ('python -c "import ddddocr,os;print(os.path.dirname(ddddocr.__file__))"') do set DDDDOCR_DIR=%%i
@@ -57,7 +57,7 @@ pyinstaller ^
   --onefile ^
   --noconsole ^
   --name "自动下单系统Pro" ^
-  --add-data "static;static" ^
+  --add-data "backend\static;static" ^
   "--add-data=%DDDDOCR_DIR%;ddddocr" ^
   "--add-data=%PW_PKG%\driver;playwright/driver" ^
   %EXTRA_DATA% ^
@@ -86,6 +86,7 @@ pyinstaller ^
   --hidden-import "core" ^
   --hidden-import "core.db" ^
   --hidden-import "core.license" ^
+  --hidden-import "core.process_env" ^
   --hidden-import "core.task_manager" ^
   --hidden-import "core.version" ^
   --hidden-import "services" ^
@@ -94,6 +95,9 @@ pyinstaller ^
   --hidden-import "services.rush_bet_svc" ^
   --hidden-import "services.pick_bet_svc" ^
   --hidden-import "services.rotate_bet_svc" ^
+  --hidden-import "services.custom_rotate_bet_svc" ^
+  --hidden-import "services.custom_win_bet_svc" ^
+  --hidden-import "services.main_trend_bet_svc" ^
   --hidden-import "services.settlement_guard" ^
   --hidden-import "services.account_whitelist" ^
   --hidden-import "services.updater" ^

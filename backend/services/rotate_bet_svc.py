@@ -78,6 +78,28 @@ def _wait_until_start(cfg, account, stop_event, log):
             last_beat = now_t
 
 
+def _parse_risk_limit(value, default):
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        parsed = float(default)
+    return max(0.0, parsed)
+
+
+def _get_settled_balance(page, samples=3, interval=0.35) -> float | None:
+    """Read a stable balance sample for profit/loss guards."""
+    values = []
+    for index in range(max(1, int(samples))):
+        value = _get_balance(page)
+        if value is not None:
+            values.append(value)
+        if index + 1 < samples:
+            time.sleep(max(0, float(interval)))
+    if not values:
+        return None
+    values.sort()
+    return values[len(values) // 2]
+
 # ─── 每路状态 ─────────────────────────────────────────────────
 
 class _PathState:
@@ -226,8 +248,8 @@ def _observe_entry_draw(paths, number_sets, draw, account, log, targets=None, ro
 # ─── 下注循环 ─────────────────────────────────────────────────
 
 def _betting_loop(page, account, cfg, stop_event, log):
-    STOP_LOSS   = cfg.get("daily_stop_loss", 29000)
-    TAKE_PROFIT = cfg.get("take_profit", 25000)
+    STOP_LOSS = _parse_risk_limit(cfg.get("daily_stop_loss", 29000), 29000)
+    TAKE_PROFIT = _parse_risk_limit(cfg.get("take_profit", 25000), 25000)
     BASE_BET    = int(cfg.get("base_bet_amount", 100))
     MULTIPLIER  = float(cfg.get("loss_multiplier", 1.3))
     MAX_LOSSES  = int(cfg.get("max_losses", 5))
@@ -248,7 +270,12 @@ def _betting_loop(page, account, cfg, stop_event, log):
         log(f"[{account}] 错误：至少需要启用一路球，当前三路都已关闭")
         return
 
-    start_balance = _get_balance(page) or 0
+    start_balance = _get_settled_balance(page)
+    if start_balance is None:
+        start_balance = _get_balance(page)
+    if start_balance is None:
+        start_balance = 0
+    settled_balance = start_balance
     initial_draw = read_stable_draw(page, _get_last_draw_with_issue)
     last_issue = initial_draw[0] if initial_draw else None
     pending_issue = None
@@ -278,7 +305,11 @@ def _betting_loop(page, account, cfg, stop_event, log):
             time.sleep(3)
             continue
 
-        profit = bal - start_balance
+        if not pending_settlement:
+            stable_balance = _get_settled_balance(page, samples=2, interval=0.2)
+            if stable_balance is not None:
+                settled_balance = stable_balance
+        profit = settled_balance - start_balance
 
         if profit >= TAKE_PROFIT:
             log(f"[{account}] 已触发止盈：利润={profit:.0f} >= {TAKE_PROFIT}")
