@@ -16,6 +16,11 @@ from services.custom_rotate_bet_svc import (
     get_account_statuses as custom_rotatebet_account_statuses,
     stop_account as stop_custom_rotatebet_account,
 )
+from services.custom_win_bet_svc import (
+    run as custom_win_bet_run,
+    get_account_statuses as custom_winbet_account_statuses,
+    stop_account as stop_custom_winbet_account,
+)
 from services.main_trend_bet_svc import (
     run as main_trend_bet_run,
     get_account_statuses as main_trend_bet_account_statuses,
@@ -33,6 +38,7 @@ TASK_LABELS = {
     "followbet": "多账号跟投",
     "rotatebet": "轮换追损",
     "custom_rotatebet": "自定义金额轮换追损",
+    "custom_winbet": "自定义金额轮换赢冲",
     "main_trend_bet": "主势大小单双追损",
 }
 
@@ -160,6 +166,16 @@ DEFAULT_ROTATEBET = {
 
 DEFAULT_CUSTOM_ROTATEBET = {
     **DEFAULT_ROTATEBET,
+    "amount_steps": [100, 130, 299, 389, 506],
+    "base_bet_amount": 100,
+    "entry_miss_trigger": 1,
+    "enabled_positions": [True, True, True],
+    "start_mode": "now",
+    "start_time": "09:00",
+}
+
+DEFAULT_CUSTOM_WINBET = {
+    **DEFAULT_CUSTOM_ROTATEBET,
     "amount_steps": [100, 130, 299, 389, 506],
     "base_bet_amount": 100,
     "entry_miss_trigger": 1,
@@ -376,6 +392,20 @@ def save_custom_rotatebet_config(data: dict):
     return {"ok": True}
 
 
+@router.get("/config/custom-winbet")
+def get_custom_winbet_config():
+    return _normalize_start_config({**DEFAULT_CUSTOM_WINBET, **get_config("custom_winbet_config", {})}, DEFAULT_CUSTOM_WINBET["start_time"])
+
+
+@router.post("/config/custom-winbet")
+def save_custom_winbet_config(data: dict):
+    existing = get_config("custom_winbet_config", DEFAULT_CUSTOM_WINBET)
+    existing.update(data)
+    existing = _normalize_start_config(existing, DEFAULT_CUSTOM_WINBET["start_time"])
+    set_config("custom_winbet_config", existing)
+    return {"ok": True}
+
+
 @router.get("/config/main-trend-bet")
 def get_main_trend_bet_config():
     return _normalize_start_config({**DEFAULT_MAIN_TREND_BET, **get_config("main_trend_bet_config", {})}, DEFAULT_MAIN_TREND_BET["start_time"])
@@ -524,6 +554,40 @@ class StopCustomRotateBetAccountRequest(BaseModel):
 @router.post("/custom-rotatebet/accounts/stop")
 def stop_custom_rotatebet_account_route(req: StopCustomRotateBetAccountRequest):
     ok, msg = stop_custom_rotatebet_account(req.key)
+    return {"ok": ok, "message": msg}
+
+
+@router.post("/custom-winbet/start")
+def start_custom_winbet():
+    ok, msg = _check_license()
+    if not ok:
+        return {"ok": False, "message": msg}
+    cfg = _normalize_start_config({**DEFAULT_CUSTOM_WINBET, **get_config("custom_winbet_config", {})}, DEFAULT_CUSTOM_WINBET["start_time"])
+    ok, msg = _check_account_whitelist("custom_winbet", cfg)
+    if not ok:
+        return {"ok": False, "message": msg}
+    ok, msg = TaskManager.get().start("custom_winbet", custom_win_bet_run, cfg)
+    return {"ok": ok, "message": msg}
+
+
+@router.post("/custom-winbet/stop")
+def stop_custom_winbet():
+    ok, msg = TaskManager.get().stop("custom_winbet")
+    return {"ok": ok, "message": msg}
+
+
+@router.get("/custom-winbet/accounts/status")
+def custom_winbet_account_status():
+    return {"accounts": custom_winbet_account_statuses()}
+
+
+class StopCustomWinBetAccountRequest(BaseModel):
+    key: str
+
+
+@router.post("/custom-winbet/accounts/stop")
+def stop_custom_winbet_account_route(req: StopCustomWinBetAccountRequest):
+    ok, msg = stop_custom_winbet_account(req.key)
     return {"ok": ok, "message": msg}
 
 
