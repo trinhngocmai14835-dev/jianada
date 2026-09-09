@@ -92,6 +92,7 @@ def test_custom_win_analysis_api_uses_saved_draw_records(tmp_path):
         assert data["ok"] is True
         assert data["summary"]["records"] == 80
         assert len(data["positions"]) == 3
+        assert len(data["recommendations"]["same5_positions"]) == 3
     finally:
         core_db.DB_PATH = old_path
 
@@ -105,7 +106,20 @@ def test_custom_win_analysis_returns_number_recommendations():
     assert recs["records"] == 120
     assert recs["replace_count"] >= 0
     assert recs["open_count"] >= 0
+    assert recs["same5_replace_count"] >= 0
     assert len(recs["positions"]) == 3
+    assert len(recs["same5_positions"]) == 3
+
+    for row in recs["same5_positions"]:
+        assert row["position"] in (1, 2, 3)
+        assert row["action"] in {"保持当前", "建议替换", "差距不大", "不建议替换", "暂无推荐"}
+        assert row["enabled_advice"] in {"建议开启/保留", "谨慎开启", "建议关闭"}
+        assert row["recommended"] is not None
+        assert row["recommended"]["same_numbers"] is True
+        assert len(row["recommended"]["set_a"]) == 5
+        assert row["recommended"]["set_a"] == row["recommended"]["set_b"]
+        assert row["recommended"]["reasons"]
+        assert len(row["candidates"]) >= 1
 
     for row in recs["positions"]:
         assert row["position"] in (1, 2, 3)

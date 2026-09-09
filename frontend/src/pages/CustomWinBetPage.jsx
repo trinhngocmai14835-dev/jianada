@@ -128,6 +128,15 @@ function recommendationSet(row, label) {
   )
 }
 
+function sameFiveRecommendationSet(row) {
+  const nums = row.recommended?.set_a || []
+  return (
+    <Space direction="vertical" size={2}>
+      {numberTags(nums, 'cyan')}
+      <Text type="secondary">A/B 同号</Text>
+    </Space>
+  )
+}
 function recommendationActionTag(value) {
   const color = value === '建议替换' ? 'blue' : value === '保持当前' ? 'green' : value === '不建议替换' ? 'red' : 'default'
   return <Tag color={color}>{value || '-'}</Tag>
@@ -399,6 +408,27 @@ export default function CustomWinBetPage() {
     },
   ], [form])
 
+  const sameFiveRecommendationColumns = useMemo(() => [
+    { title: '球路', dataIndex: 'name', width: 72 },
+    { title: '动作', dataIndex: 'action', width: 96, render: recommendationActionTag },
+    { title: '开关', dataIndex: 'enabled_advice', width: 116, render: enabledAdviceTag },
+    { title: '同号5码', width: 142, render: (_, row) => sameFiveRecommendationSet(row) },
+    { title: '利润', width: 88, render: (_, row) => profitTag(row.recommended?.profit) },
+    { title: '命中', width: 76, render: (_, row) => pct(row.recommended?.hit_rate) },
+    { title: '回撤', width: 82, render: (_, row) => Number(row.recommended?.max_drawdown || 0).toFixed(2) },
+    { title: '评分', width: 82, render: (_, row) => Number(row.recommended?.score || 0).toFixed(2) },
+    { title: '理由', width: 260, render: (_, row) => <Text type="secondary">{(row.recommended?.reasons || []).join('；') || '-'}</Text> },
+    {
+      title: '操作',
+      width: 86,
+      fixed: 'right',
+      render: (_, row) => (
+        <Button size="small" type="link" disabled={!row.recommended} onClick={() => applyRecommendation(row)}>
+          应用
+        </Button>
+      ),
+    },
+  ], [form])
   const isRunning = status === 'running'
   const joinMode = isRunning && accountList.length > 1
   const saveButtonText = joinMode ? '保存并运行新增账号' : '仅保存配置'
@@ -633,6 +663,22 @@ export default function CustomWinBetPage() {
                 ))}
                 {analysis.recommendations && (
                   <>
+                    <Divider orientation="left" plain>同号5码赢冲推荐</Divider>
+                    <Alert
+                      type="info"
+                      showIcon
+                      message={`同号5码已回测 ${analysis.recommendations.records} 条开奖记录，建议替换 ${analysis.recommendations.same5_replace_count || 0} 路。`}
+                      description={analysis.recommendations.same5_method}
+                    />
+                    <Table
+                      size="small"
+                      rowKey="position"
+                      columns={sameFiveRecommendationColumns}
+                      dataSource={analysis.recommendations.same5_positions || []}
+                      pagination={false}
+                      scroll={{ x: 1060 }}
+                      locale={{ emptyText: <Empty description="暂无同号5码赢冲推荐" /> }}
+                    />
                     <Divider orientation="left" plain>赢冲号码推荐</Divider>
                     <Alert
                       type="info"

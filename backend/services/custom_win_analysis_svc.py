@@ -368,7 +368,7 @@ def _candidate_pairs(
 
 def _candidate_reasons(candidate: dict[str, Any], current: dict[str, Any] | None) -> list[str]:
     reasons = [
-        f"{candidate['size_label']}个号轮换",
+        "A/B同用5个号码赢冲" if candidate.get("same_numbers") else f"{candidate['size_label']}个号轮换",
         f"回测利润 {candidate['profit']}",
         f"命中 {candidate['hit_rate'] * 100:.1f}%",
         f"最大回撤 {candidate['max_drawdown']}",
@@ -450,6 +450,71 @@ def _recommend_position_groups(
     }
 
 
+
+def _recommend_same5_position(
+    records: list[DrawRecord],
+    position: int,
+    current_a: list[int],
+    current_b: list[int],
+    amount_steps: list[int],
+    entry_misses: int,
+    odds: float,
+    rebate_rate: float,
+    current_position: dict[str, Any],
+) -> dict[str, Any]:
+    current_key = (tuple(sorted(current_a)), tuple(sorted(current_b)))
+    current_candidate = _simulate_position_candidate(records, position, current_a, current_b, amount_steps, entry_misses, odds, rebate_rate)
+    current_candidate["source"] = "current"
+    current_candidate["is_current"] = (tuple(current_candidate["set_a"]), tuple(current_candidate["set_b"])) == current_key
+
+    evaluated = []
+    for combo in combinations(DIGITS, 5):
+        nums = list(combo)
+        metric = _simulate_position_candidate(records, position, nums, nums, amount_steps, entry_misses, odds, rebate_rate)
+        metric["source"] = "same5"
+        metric["same_numbers"] = True
+        metric["is_current"] = (tuple(metric["set_a"]), tuple(metric["set_b"])) == current_key
+        evaluated.append(metric)
+
+    evaluated.sort(key=lambda item: item["score"], reverse=True)
+    top = evaluated[0] if evaluated else None
+
+    if not top:
+        action = "暂无推荐"
+    elif top.get("is_current"):
+        action = "保持当前"
+    elif top.get("profit", 0) <= 0:
+        action = "不建议替换"
+    else:
+        improvement = float(top.get("profit") or 0) - float(current_candidate.get("profit") or 0)
+        threshold = max(abs(float(current_candidate.get("profit") or 0)) * 0.08, 10.0)
+        action = "建议替换" if improvement >= threshold else "差距不大"
+
+    enabled_advice = "建议关闭"
+    if top and top.get("profit", 0) > 0:
+        enabled_advice = "谨慎开启" if top.get("max_drawdown", 0) > max(top.get("profit", 0) * 2.5, 1) else "建议开启/保留"
+
+    top_candidates = [{**candidate, "reasons": _candidate_reasons(candidate, current_candidate)} for candidate in evaluated[:5]]
+    recommended = {**top, "reasons": _candidate_reasons(top, current_candidate)} if top else None
+    current_out = {
+        "set_a": list(current_a),
+        "set_b": list(current_b),
+        "profit": current_position.get("profit", 0),
+        "roi": current_position.get("roi", 0),
+        "hit_rate": current_position.get("hit_rate", 0),
+        "max_drawdown": current_position.get("max_drawdown", 0),
+        "max_tier_reached": current_position.get("max_tier_reached", 1),
+    }
+    return {
+        "position": position + 1,
+        "name": BALL_LABELS[position],
+        "action": action,
+        "enabled_advice": enabled_advice,
+        "current": current_out,
+        "recommended": recommended,
+        "candidates": top_candidates,
+    }
+
 def _build_number_recommendations(
     records: list[DrawRecord],
     number_sets,
@@ -460,13 +525,29 @@ def _build_number_recommendations(
     rebate_rate: float,
 ) -> dict[str, Any]:
     by_position = []
+    same5_by_position = []
     for pos in range(NUM_POSITIONS):
+        current_a = list(number_sets[pos][0])
+        current_b = list(number_sets[pos][1])
         by_position.append(
             _recommend_position_groups(
                 records,
                 pos,
-                list(number_sets[pos][0]),
-                list(number_sets[pos][1]),
+                current_a,
+                current_b,
+                amount_steps,
+                entry_misses,
+                odds,
+                rebate_rate,
+                positions[pos],
+            )
+        )
+        same5_by_position.append(
+            _recommend_same5_position(
+                records,
+                pos,
+                current_a,
+                current_b,
                 amount_steps,
                 entry_misses,
                 odds,
@@ -477,13 +558,17 @@ def _build_number_recommendations(
 
     replace_count = sum(1 for row in by_position if row.get("action") == "建议替换")
     open_count = sum(1 for row in by_position if row.get("enabled_advice") == "建议开启/保留")
+    same5_replace_count = sum(1 for row in same5_by_position if row.get("action") == "建议替换")
     return {
         "mode": "custom_winbet",
         "records": len(records),
         "method": "按赢冲状态机回测候选 A/B 号码组，优先看利润、ROI、最大回撤、最长不中和最高触达阶数。",
+        "same5_method": "按同一组 5 个号码同时作为 A/B 组回测，保留轮换赢冲节奏，但降低号码组切换复杂度。",
         "replace_count": replace_count,
         "open_count": open_count,
+        "same5_replace_count": same5_replace_count,
         "positions": by_position,
+        "same5_positions": same5_by_position,
     }
 
 
