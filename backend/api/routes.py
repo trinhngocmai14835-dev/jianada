@@ -22,6 +22,7 @@ from services.custom_win_bet_svc import (
     get_account_statuses as custom_winbet_account_statuses,
     stop_account as stop_custom_winbet_account,
 )
+from services.custom_win_analysis_svc import analyze_custom_winbet_payload
 from services.main_trend_bet_svc import (
     run as main_trend_bet_run,
     get_account_statuses as main_trend_bet_account_statuses,
@@ -584,10 +585,28 @@ def custom_winbet_account_status():
     return {"accounts": custom_winbet_account_statuses()}
 
 
+
+
+class CustomWinAnalysisRequest(BaseModel):
+    config: dict[str, Any] = {}
+    records: list[dict[str, Any]] = []
+    text: str = ""
+    limit: int = 1000
+
 class StopCustomWinBetAccountRequest(BaseModel):
     key: str
 
 
+
+
+@router.post("/custom-winbet/analyze")
+def api_custom_winbet_analyze(req: CustomWinAnalysisRequest):
+    data = req.model_dump() if hasattr(req, "model_dump") else req.dict()
+    cfg = {**DEFAULT_CUSTOM_WINBET, **get_config("custom_winbet_config", {}), **(data.get("config") or {})}
+    if not data.get("records") and not data.get("text"):
+        data["records"] = get_draw_records(data.get("limit") or 1000)
+    data["config"] = cfg
+    return analyze_custom_winbet_payload(data)
 @router.post("/custom-winbet/accounts/stop")
 def stop_custom_winbet_account_route(req: StopCustomWinBetAccountRequest):
     ok, msg = stop_custom_winbet_account(req.key)

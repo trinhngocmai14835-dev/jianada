@@ -1,13 +1,16 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import {
-  Card, Form, Input, InputNumber, Button, Space, Typography, Divider,
-  Row, Col, message, Tag, Collapse, Radio, Modal, Switch, Table,
+  Alert, Button, Card, Col, Collapse, Divider, Empty, Form, Input, InputNumber,
+  Modal, Radio, Row, Space, Statistic, Switch, Table, Tag, Typography, message,
 } from 'antd'
-import { PlusOutlined, MinusCircleOutlined, PlayCircleOutlined, PauseCircleOutlined, ClockCircleOutlined, StopOutlined } from '@ant-design/icons'
+import {
+  BarChartOutlined, ClockCircleOutlined, MinusCircleOutlined, PauseCircleOutlined,
+  PlayCircleOutlined, PlusOutlined, StopOutlined,
+} from '@ant-design/icons'
 import { api } from '../api/client'
 import LogViewer from '../components/LogViewer'
 
-const { Title, Text } = Typography
+const { Title, Text, Paragraph } = Typography
 const { Panel } = Collapse
 
 const STATUS_TAG = {
@@ -43,7 +46,7 @@ const nextAlarm = (hhmm) => {
 
 function parseNums(str) {
   return String(str || '')
-    .split(/[，,\s]+/)
+    .split(/[,，\s]+/)
     .map((s) => s.trim())
     .filter(Boolean)
     .map(Number)
@@ -92,6 +95,48 @@ function formToCfg(vals) {
   }
 }
 
+function pct(value) {
+  return `${((Number(value) || 0) * 100).toFixed(1)}%`
+}
+
+function money(value) {
+  const n = Number(value) || 0
+  return n > 0 ? `+${n.toFixed(2)}` : n.toFixed(2)
+}
+
+function profitTag(value) {
+  const n = Number(value) || 0
+  return <Tag color={n > 0 ? 'green' : n < 0 ? 'red' : 'default'}>{money(n)}</Tag>
+}
+
+function riskColor(value) {
+  if (value === '低') return 'green'
+  if (value === '中' || value === '样本不足') return 'gold'
+  return 'red'
+}
+
+function suggestionType(level) {
+  if (level === 'error') return 'error'
+  if (level === 'success') return 'success'
+  if (level === 'warning') return 'warning'
+  return 'info'
+}
+
+function setMetric(row, label) {
+  const nums = label === 'A' ? row.set_a : row.set_b
+  const metric = row.sets?.[label] || {}
+  return (
+    <Space direction="vertical" size={2}>
+      <Text>{label}：{(nums || []).join(',')}</Text>
+      <Space size={4} wrap>
+        {profitTag(metric.profit)}
+        <Tag>命中 {pct(metric.hit_rate)}</Tag>
+        <Tag>下注 {metric.bets || 0}</Tag>
+      </Space>
+    </Space>
+  )
+}
+
 export default function CustomWinBetPage() {
   const [form] = Form.useForm()
   const startMode = Form.useWatch('start_mode', form) || 'now'
@@ -101,6 +146,8 @@ export default function CustomWinBetPage() {
   const [accounts, setAccounts] = useState([])
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [analyzing, setAnalyzing] = useState(false)
+  const [analysis, setAnalysis] = useState(null)
 
   const showSaveError = (err) => {
     const firstError = err?.errorFields?.[0]
@@ -122,19 +169,31 @@ export default function CustomWinBetPage() {
     return () => clearInterval(t)
   }, [])
 
+  const validateStrategyConfig = (cfg) => {
+    if (!cfg.enabled_positions.some(Boolean)) {
+      message.error('至少启用一路球')
+      return false
+    }
+    if (cfg.amount_steps.length < 1 || cfg.amount_steps.length > 20) {
+      message.error('金额阶梯需要 1 到 20 阶')
+      return false
+    }
+    for (let i = 0; i < 3; i += 1) {
+      const row = cfg.number_sets?.[i] || {}
+      if (![4, 5].includes(row.set_a?.length) || ![4, 5].includes(row.set_b?.length)) {
+        message.error(`${BALL_LABELS[i]} A/B 组各填 4 个或 5 个有效号码`)
+        return false
+      }
+    }
+    return true
+  }
+
   const handleSave = async (overrides = {}) => {
     try {
       const saveOverrides = overrides && (overrides.nativeEvent || overrides.currentTarget || overrides.target) ? {} : (overrides || {})
       const vals = await form.validateFields()
       const cfg = { ...formToCfg(vals), ...saveOverrides }
-      if (!cfg.enabled_positions.some(Boolean)) {
-        message.error('至少启用一路球')
-        return false
-      }
-      if (cfg.amount_steps.length < 1 || cfg.amount_steps.length > 20) {
-        message.error('金额阶梯需要 1 到 20 阶')
-        return false
-      }
+      if (!validateStrategyConfig(cfg)) return false
       setSaving(true)
       const res = await api.saveCustomWinBetConfig(cfg)
       if (res?.ok === false) {
@@ -148,6 +207,24 @@ export default function CustomWinBetPage() {
       return false
     } finally {
       setSaving(false)
+    }
+  }
+
+  const handleAnalyze = async () => {
+    const vals = form.getFieldsValue(true)
+    const cfg = formToCfg(vals)
+    if (!validateStrategyConfig(cfg)) return
+    setAnalyzing(true)
+    try {
+      const res = await api.analyzeCustomWinBet({ config: cfg, limit: 1000 })
+      setAnalysis(res)
+      if (res?.ok === false) {
+        message.warning(res.message || '分析失败')
+      } else {
+        message.success('当前配置回测完成')
+      }
+    } finally {
+      setAnalyzing(false)
     }
   }
 
@@ -192,7 +269,7 @@ export default function CustomWinBetPage() {
   const handleSaveAndRunAccounts = async () => {
     if (!(await handleSave())) return
     if (isRunning) {
-      message.success('?????????????????????????')
+      message.success('新增账号已保存并加入当前会话')
       refresh()
       return
     }
@@ -241,18 +318,35 @@ export default function CustomWinBetPage() {
     },
   ]
 
+  const analysisColumns = useMemo(() => [
+    { title: '球路', dataIndex: 'name', width: 72 },
+    { title: '状态', dataIndex: 'enabled', width: 72, render: (v) => (v ? <Tag color="green">开启</Tag> : <Tag>关闭</Tag>) },
+    { title: '利润', dataIndex: 'profit', width: 88, render: profitTag },
+    { title: '命中', dataIndex: 'hit_rate', width: 76, render: pct },
+    { title: '下注', dataIndex: 'bets', width: 68 },
+    { title: '回撤', dataIndex: 'max_drawdown', width: 82, render: (v) => Number(v || 0).toFixed(2) },
+    { title: '最高阶', dataIndex: 'max_tier_reached', width: 76, render: (v) => `${v || 1}阶` },
+    { title: 'A组', width: 190, render: (_, row) => setMetric(row, 'A') },
+    { title: 'B组', width: 190, render: (_, row) => setMetric(row, 'B') },
+    { title: '建议', dataIndex: 'advice', width: 190 },
+  ], [])
+
   const isRunning = status === 'running'
   const joinMode = isRunning && accountList.length > 1
   const saveButtonText = joinMode ? '保存并运行新增账号' : '仅保存配置'
+  const summary = analysis?.summary
 
   return (
     <div style={{ padding: 24 }}>
-      <Space style={{ marginBottom: 24, width: '100%', justifyContent: 'space-between' }} align="center">
+      <Space style={{ marginBottom: 24, width: '100%', justifyContent: 'space-between' }} align="center" wrap>
         <Space>
           <Title level={4} style={{ margin: 0 }}>自定义金额轮换赢冲</Title>
           {STATUS_TAG[status] ?? STATUS_TAG.stopped}
         </Space>
-        <Space>
+        <Space wrap>
+          <Button icon={<BarChartOutlined />} onClick={handleAnalyze} loading={analyzing}>
+            分析当前配置
+          </Button>
           <Button icon={<PlayCircleOutlined />} type="primary" onClick={handleStartNow} loading={loading} disabled={isRunning}>
             保存并随开随跑
           </Button>
@@ -433,15 +527,56 @@ export default function CustomWinBetPage() {
                 {saveButtonText}
               </Button>
               {joinMode && (
-                <Typography.Paragraph type="secondary" style={{ margin: '10px 0 0', fontSize: 12 }}>
-                  运行中新增账号时，点击此按钮会保存账号并加入当前会话。原有账号不会重启；新账号登录后从第 1 阶开始，等待下一个完整投注周期再运行；命中升阶，未中立即回到第 1 阶。
-                </Typography.Paragraph>
+                <Paragraph type="secondary" style={{ margin: '10px 0 0', fontSize: 12 }}>
+                  运行中新增账号会加入当前会话，沿用当前锁定策略和金额阶梯，从第 1 阶开始，等待下一完整投注周期再运行。
+                </Paragraph>
               )}
             </Form>
           </Card>
         </Col>
 
         <Col xs={24} lg={10}>
+          <Card title="配置回测分析" extra={<Button size="small" icon={<BarChartOutlined />} onClick={handleAnalyze} loading={analyzing}>分析</Button>} style={{ borderRadius: 8, marginBottom: 24 }}>
+            {analysis?.ok === false && <Alert type="warning" showIcon message={analysis.message} />}
+            {analysis?.ok ? (
+              <Space direction="vertical" size={12} style={{ width: '100%' }}>
+                <Row gutter={[8, 8]}>
+                  <Col xs={12} md={8}>
+                    <Statistic title="净利润" value={money(summary?.profit)} valueStyle={{ color: (summary?.profit || 0) >= 0 ? '#3f8600' : '#cf1322' }} />
+                  </Col>
+                  <Col xs={12} md={8}>
+                    <Statistic title="命中率" value={pct(summary?.hit_rate)} />
+                  </Col>
+                  <Col xs={12} md={8}>
+                    <Statistic title="风险" value={summary?.risk_level || '-'} valueStyle={{ color: riskColor(summary?.risk_level) === 'green' ? '#3f8600' : riskColor(summary?.risk_level) === 'gold' ? '#d48806' : '#cf1322' }} />
+                  </Col>
+                  <Col xs={12} md={8}>
+                    <Statistic title="下注" value={summary?.bets || 0} />
+                  </Col>
+                  <Col xs={12} md={8}>
+                    <Statistic title="最大回撤" value={Number(summary?.max_drawdown || 0).toFixed(2)} />
+                  </Col>
+                  <Col xs={12} md={8}>
+                    <Statistic title="开奖记录" value={summary?.records || 0} />
+                  </Col>
+                </Row>
+                {(analysis.suggestions || []).map((item, index) => (
+                  <Alert key={`${item.level}-${index}`} type={suggestionType(item.level)} showIcon message={item.text} />
+                ))}
+                <Table
+                  size="small"
+                  rowKey="position"
+                  columns={analysisColumns}
+                  dataSource={analysis.positions || []}
+                  pagination={false}
+                  scroll={{ x: 1260 }}
+                />
+              </Space>
+            ) : !analysis && (
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="等待分析" />
+            )}
+          </Card>
+
           <Card title="账号运行状态" style={{ borderRadius: 8, marginBottom: 24 }}>
             <Table size="small" rowKey="key" columns={accountColumns} dataSource={accounts} pagination={false} scroll={{ x: 640 }} />
           </Card>

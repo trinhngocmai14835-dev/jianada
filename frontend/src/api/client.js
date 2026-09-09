@@ -46,6 +46,7 @@ export const api = {
   saveCustomRotateBetConfig: (data) => req('POST', '/config/custom-rotatebet', data),
   getCustomWinBetConfig: () => req('GET', '/config/custom-winbet'),
   saveCustomWinBetConfig: (data) => req('POST', '/config/custom-winbet', data),
+  analyzeCustomWinBet: (data) => req('POST', '/custom-winbet/analyze', data),
   getMainTrendBetConfig: () => req('GET', '/config/main-trend-bet'),
   saveMainTrendBetConfig: (data) => req('POST', '/config/main-trend-bet', data),
 
