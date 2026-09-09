@@ -65,7 +65,18 @@ def test_custom_rotate_analysis_returns_chase_recommendations():
     assert recs["records"] == 140
     assert recs["recent_records"] == 80
     assert recs["replace_count"] >= 0
+    assert recs["same5_replace_count"] >= 0
     assert len(recs["positions"]) == 3
+    assert len(recs["same5_positions"]) == 3
+
+    for row in recs["same5_positions"]:
+        assert row["position"] in (1, 2, 3)
+        assert row["recommended"] is not None
+        assert row["recommended"]["same_numbers"] is True
+        assert len(row["recommended"]["set_a"]) == 5
+        assert row["recommended"]["set_a"] == row["recommended"]["set_b"]
+        assert row["recommended"]["recent"]["records"] == 80
+        assert row["recommended"]["reasons"]
 
     for row in recs["positions"]:
         assert row["position"] in (1, 2, 3)
@@ -94,5 +105,6 @@ def test_custom_rotate_analysis_api_uses_saved_draw_records(tmp_path):
         assert data["ok"] is True
         assert data["summary"]["records"] == 90
         assert len(data["recommendations"]["positions"]) == 3
+        assert len(data["recommendations"]["same5_positions"]) == 3
     finally:
         core_db.DB_PATH = old_path

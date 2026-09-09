@@ -125,6 +125,15 @@ function recommendationSet(row, label) {
   )
 }
 
+function sameFiveRecommendationSet(row) {
+  const nums = row.recommended?.set_a || []
+  return (
+    <Space direction="vertical" size={2}>
+      {numberTags(nums, 'cyan')}
+      <Text type="secondary">A/B 同号</Text>
+    </Space>
+  )
+}
 function recommendationActionTag(value) {
   const color = value === '建议替换' ? 'blue' : value === '保持当前' ? 'green' : value === '暂不推荐' ? 'red' : 'default'
   return <Tag color={color}>{value || '-'}</Tag>
@@ -393,6 +402,28 @@ export default function CustomRotateBetPage() {
       ),
     },
   ], [form])
+  const sameFiveRecommendationColumns = useMemo(() => [
+    { title: '球路', dataIndex: 'name', width: 72 },
+    { title: '动作', dataIndex: 'action', width: 96, render: recommendationActionTag },
+    { title: '开关', dataIndex: 'enabled_advice', width: 116, render: enabledAdviceTag },
+    { title: '同号5码', width: 142, render: (_, row) => sameFiveRecommendationSet(row) },
+    { title: '全样本利润', width: 104, render: (_, row) => profitTag(row.recommended?.profit) },
+    { title: '最近期利润', width: 104, render: (_, row) => profitTag(row.recommended?.recent?.profit) },
+    { title: '命中', width: 76, render: (_, row) => pct(row.recommended?.hit_rate) },
+    { title: '最高阶', width: 76, render: (_, row) => `${row.recommended?.max_tier_reached || 1}阶` },
+    { title: '回撤', width: 82, render: (_, row) => Number(row.recommended?.max_drawdown || 0).toFixed(2) },
+    { title: '理由', width: 280, render: (_, row) => <Text type="secondary">{(row.recommended?.reasons || []).join('；') || '-'}</Text> },
+    {
+      title: '操作',
+      width: 86,
+      fixed: 'right',
+      render: (_, row) => (
+        <Button size="small" type="link" disabled={!row.recommended} onClick={() => applyRecommendation(row)}>
+          应用
+        </Button>
+      ),
+    },
+  ], [form])
   const isRunning = status === 'running'
   const hasMultipleAccounts = accountList.length > 1
   const saveButtonText = hasMultipleAccounts ? '保存并运行新增账号' : '仅保存配置'
@@ -598,6 +629,74 @@ export default function CustomRotateBetPage() {
         </Col>
 
         <Col xs={24} lg={10}>
+          <Card
+            title="追损回测推荐"
+            extra={analysis?.recommendations ? <Tag color="blue">真实开奖记录</Tag> : null}
+            style={{ borderRadius: 8, marginBottom: 24 }}
+          >
+            {analysis ? (
+              analysis.ok === false ? (
+                <Alert type="warning" showIcon message={analysis.message || '分析失败'} />
+              ) : (
+                <>
+                  <Row gutter={[12, 12]} style={{ marginBottom: 12 }}>
+                    <Col xs={12} md={8}>
+                      <Statistic title="回测期数" value={summary?.records || 0} />
+                    </Col>
+                    <Col xs={12} md={8}>
+                      <Statistic title="总利润" value={money(summary?.profit)} valueStyle={{ color: Number(summary?.profit || 0) >= 0 ? '#389e0d' : '#cf1322' }} />
+                    </Col>
+                    <Col xs={12} md={8}>
+                      <Statistic title="风险" value={summary?.risk_level || '-'} valueStyle={{ color: riskColor(summary?.risk_level) }} />
+                    </Col>
+                  </Row>
+                  <Space direction="vertical" style={{ width: '100%', marginBottom: 12 }}>
+                    {(analysis.suggestions || []).slice(0, 4).map((item, index) => (
+                      <Alert key={`${item.level}-${index}`} type={suggestionType(item.level)} showIcon message={item.text} />
+                    ))}
+                  </Space>
+
+                  <Divider orientation="left">同号5码追损推荐</Divider>
+                  <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
+                    A组和B组使用同一套5个号码，仍按当前追损阶梯和入场条件回测；点应用后会同时写入A/B组。
+                  </Typography.Paragraph>
+                  <Table
+                    size="small"
+                    rowKey="position"
+                    columns={sameFiveRecommendationColumns}
+                    dataSource={analysis.recommendations?.same5_positions || []}
+                    pagination={false}
+                    scroll={{ x: 1060 }}
+                    locale={{ emptyText: <Empty description="暂无同号5码推荐" /> }}
+                  />
+
+                  <Divider orientation="left">A/B轮换追损推荐</Divider>
+                  <Table
+                    size="small"
+                    rowKey="position"
+                    columns={recommendationColumns}
+                    dataSource={analysis.recommendations?.positions || []}
+                    pagination={false}
+                    scroll={{ x: 1260 }}
+                    locale={{ emptyText: <Empty description="暂无A/B轮换推荐" /> }}
+                  />
+
+                  <Divider orientation="left">当前配置回测</Divider>
+                  <Table
+                    size="small"
+                    rowKey="position"
+                    columns={analysisColumns}
+                    dataSource={analysis.positions || []}
+                    pagination={false}
+                    scroll={{ x: 1110 }}
+                  />
+                </>
+              )
+            ) : (
+              <Empty description="点击“分析当前配置”后显示追损推荐号码" />
+            )}
+          </Card>
+
           <Card title="账号运行状态" style={{ borderRadius: 8, marginBottom: 24 }}>
             <Table size="small" rowKey="key" columns={accountColumns} dataSource={accounts} pagination={false} scroll={{ x: 640 }} />
           </Card>
