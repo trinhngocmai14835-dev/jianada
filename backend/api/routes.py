@@ -22,6 +22,7 @@ from services.custom_win_bet_svc import (
     get_account_statuses as custom_winbet_account_statuses,
     stop_account as stop_custom_winbet_account,
 )
+from services.custom_rotate_analysis_svc import analyze_custom_rotatebet_payload
 from services.custom_win_analysis_svc import analyze_custom_winbet_payload
 from services.main_trend_bet_svc import (
     run as main_trend_bet_run,
@@ -561,6 +562,22 @@ def stop_custom_rotatebet_account_route(req: StopCustomRotateBetAccountRequest):
     return {"ok": ok, "message": msg}
 
 
+
+class CustomRotateAnalysisRequest(BaseModel):
+    config: dict[str, Any] = {}
+    records: list[dict[str, Any]] = []
+    text: str = ""
+    limit: int = 1000
+
+
+@router.post("/custom-rotatebet/analyze")
+def api_custom_rotatebet_analyze(req: CustomRotateAnalysisRequest):
+    data = req.model_dump() if hasattr(req, "model_dump") else req.dict()
+    cfg = {**DEFAULT_CUSTOM_ROTATEBET, **get_config("custom_rotatebet_config", {}), **(data.get("config") or {})}
+    if not data.get("records") and not data.get("text"):
+        data["records"] = get_draw_records(data.get("limit") or 1000)
+    data["config"] = cfg
+    return analyze_custom_rotatebet_payload(data)
 @router.post("/custom-winbet/start")
 def start_custom_winbet():
     ok, msg = _check_license()

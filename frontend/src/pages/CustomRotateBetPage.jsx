@@ -1,9 +1,9 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import {
-  Card, Form, Input, InputNumber, Button, Space, Typography, Divider,
+  Alert, Card, Empty, Form, Input, InputNumber, Button, Space, Statistic, Typography, Divider,
   Row, Col, message, Tag, Collapse, Radio, Modal, Switch, Table,
 } from 'antd'
-import { PlusOutlined, MinusCircleOutlined, PlayCircleOutlined, PauseCircleOutlined, ClockCircleOutlined, StopOutlined } from '@ant-design/icons'
+import { BarChartOutlined, PlusOutlined, MinusCircleOutlined, PlayCircleOutlined, PauseCircleOutlined, ClockCircleOutlined, StopOutlined } from '@ant-design/icons'
 import { api } from '../api/client'
 import LogViewer from '../components/LogViewer'
 
@@ -92,6 +92,76 @@ function formToCfg(vals) {
   }
 }
 
+function pct(value) {
+  return `${((Number(value) || 0) * 100).toFixed(1)}%`
+}
+
+function money(value) {
+  const n = Number(value) || 0
+  return n > 0 ? `+${n.toFixed(2)}` : n.toFixed(2)
+}
+
+function profitTag(value) {
+  const n = Number(value) || 0
+  return <Tag color={n > 0 ? 'green' : n < 0 ? 'red' : 'default'}>{money(n)}</Tag>
+}
+
+function numberTags(values, color = 'geekblue') {
+  return (
+    <Space size={[4, 4]} wrap>
+      {(values || []).map((value) => <Tag color={color} key={value}>{value}</Tag>)}
+    </Space>
+  )
+}
+
+function recommendationSet(row, label) {
+  const candidate = row.recommended || {}
+  const nums = label === 'A' ? candidate.set_a : candidate.set_b
+  return (
+    <Space direction="vertical" size={2}>
+      <Text>{label}组</Text>
+      {numberTags(nums, label === 'A' ? 'blue' : 'purple')}
+    </Space>
+  )
+}
+
+function recommendationActionTag(value) {
+  const color = value === '建议替换' ? 'blue' : value === '保持当前' ? 'green' : value === '暂不推荐' ? 'red' : 'default'
+  return <Tag color={color}>{value || '-'}</Tag>
+}
+
+function enabledAdviceTag(value) {
+  const color = value === '建议开启/保留' ? 'green' : value === '谨慎开启' ? 'gold' : 'red'
+  return <Tag color={color}>{value || '-'}</Tag>
+}
+
+function riskColor(value) {
+  if (value === '低') return 'green'
+  if (value === '中' || value === '样本不足') return 'gold'
+  return 'red'
+}
+
+function suggestionType(level) {
+  if (level === 'error') return 'error'
+  if (level === 'success') return 'success'
+  if (level === 'warning') return 'warning'
+  return 'info'
+}
+
+function setMetric(row, label) {
+  const nums = label === 'A' ? row.set_a : row.set_b
+  const metric = row.sets?.[label] || {}
+  return (
+    <Space direction="vertical" size={2}>
+      <Text>{label}：{(nums || []).join(',')}</Text>
+      <Space size={4} wrap>
+        {profitTag(metric.profit)}
+        <Tag>命中 {pct(metric.hit_rate)}</Tag>
+        <Tag>下注 {metric.bets || 0}</Tag>
+      </Space>
+    </Space>
+  )
+}
 export default function CustomRotateBetPage() {
   const [form] = Form.useForm()
   const startMode = Form.useWatch('start_mode', form) || 'now'
@@ -101,6 +171,8 @@ export default function CustomRotateBetPage() {
   const [accounts, setAccounts] = useState([])
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [analyzing, setAnalyzing] = useState(false)
+  const [analysis, setAnalysis] = useState(null)
 
   const showSaveError = (err) => {
     const firstError = err?.errorFields?.[0]
@@ -122,19 +194,30 @@ export default function CustomRotateBetPage() {
     return () => clearInterval(t)
   }, [])
 
+  const validateStrategyConfig = (cfg) => {
+    if (!cfg.enabled_positions.some(Boolean)) {
+      message.error('至少启用一路球')
+      return false
+    }
+    if (cfg.amount_steps.length < 1 || cfg.amount_steps.length > 20) {
+      message.error('金额阶梯需要 1 到 20 阶')
+      return false
+    }
+    for (let i = 0; i < 3; i += 1) {
+      const row = cfg.number_sets?.[i] || {}
+      if (![4, 5].includes(row.set_a?.length) || ![4, 5].includes(row.set_b?.length)) {
+        message.error(`${BALL_LABELS[i]} A/B 组各填 4 个或 5 个有效号码`)
+        return false
+      }
+    }
+    return true
+  }
   const handleSave = async (overrides = {}) => {
     try {
       const saveOverrides = overrides && (overrides.nativeEvent || overrides.currentTarget || overrides.target) ? {} : (overrides || {})
       const vals = await form.validateFields()
       const cfg = { ...formToCfg(vals), ...saveOverrides }
-      if (!cfg.enabled_positions.some(Boolean)) {
-        message.error('至少启用一路球')
-        return false
-      }
-      if (cfg.amount_steps.length < 1 || cfg.amount_steps.length > 20) {
-        message.error('金额阶梯需要 1 到 20 阶')
-        return false
-      }
+      if (!validateStrategyConfig(cfg)) return false
       setSaving(true)
       const res = await api.saveCustomRotateBetConfig(cfg)
       if (res?.ok === false) {
@@ -151,6 +234,23 @@ export default function CustomRotateBetPage() {
     }
   }
 
+  const handleAnalyze = async () => {
+    const vals = form.getFieldsValue(true)
+    const cfg = formToCfg(vals)
+    if (!validateStrategyConfig(cfg)) return
+    setAnalyzing(true)
+    try {
+      const res = await api.analyzeCustomRotateBet({ config: cfg, limit: 1000 })
+      setAnalysis(res)
+      if (res?.ok === false) {
+        message.warning(res.message || '分析失败')
+      } else {
+        message.success('追损回测推荐已生成')
+      }
+    } finally {
+      setAnalyzing(false)
+    }
+  }
   const doStart = async () => {
     setLoading(true)
     const res = await api.startCustomRotateBet()
@@ -192,7 +292,7 @@ export default function CustomRotateBetPage() {
   const handleSaveAndRunAccounts = async () => {
     if (!(await handleSave())) return
     if (isRunning) {
-      message.success('?????????????????????????')
+      message.success('新增账号已保存并加入当前会话')
       refresh()
       return
     }
@@ -241,9 +341,62 @@ export default function CustomRotateBetPage() {
     },
   ]
 
+  const analysisColumns = useMemo(() => [
+    { title: '球路', dataIndex: 'name', width: 72 },
+    { title: '状态', dataIndex: 'enabled', width: 72, render: (v) => (v ? <Tag color="green">开启</Tag> : <Tag>关闭</Tag>) },
+    { title: '利润', dataIndex: 'profit', width: 88, render: profitTag },
+    { title: '命中', dataIndex: 'hit_rate', width: 76, render: pct },
+    { title: '下注', dataIndex: 'bets', width: 68 },
+    { title: '回撤', dataIndex: 'max_drawdown', width: 82, render: (v) => Number(v || 0).toFixed(2) },
+    { title: '最长不中', dataIndex: 'max_miss_streak', width: 86 },
+    { title: '最高阶', dataIndex: 'max_tier_reached', width: 76, render: (v) => `${v || 1}阶` },
+    { title: 'A组', width: 190, render: (_, row) => setMetric(row, 'A') },
+    { title: 'B组', width: 190, render: (_, row) => setMetric(row, 'B') },
+    { title: '建议', dataIndex: 'advice', width: 190 },
+  ], [])
+
+  const applyRecommendation = (row) => {
+    const candidate = row.recommended
+    const pos = Number(row.position) - 1
+    if (!candidate || pos < 0 || pos >= 3) return
+    const nextSets = [...(form.getFieldValue('number_sets') || [])]
+    while (nextSets.length < 3) nextSets.push({ set_a: '', set_b: '' })
+    nextSets[pos] = {
+      ...(nextSets[pos] || {}),
+      set_a: (candidate.set_a || []).join(','),
+      set_b: (candidate.set_b || []).join(','),
+    }
+    form.setFieldsValue({ number_sets: nextSets })
+    message.success(`${row.name} 已应用追损推荐号码`)
+  }
+
+  const recommendationColumns = useMemo(() => [
+    { title: '球路', dataIndex: 'name', width: 72 },
+    { title: '动作', dataIndex: 'action', width: 96, render: recommendationActionTag },
+    { title: '开关', dataIndex: 'enabled_advice', width: 116, render: enabledAdviceTag },
+    { title: '推荐A组', width: 128, render: (_, row) => recommendationSet(row, 'A') },
+    { title: '推荐B组', width: 128, render: (_, row) => recommendationSet(row, 'B') },
+    { title: '全样本利润', width: 104, render: (_, row) => profitTag(row.recommended?.profit) },
+    { title: '最近期利润', width: 104, render: (_, row) => profitTag(row.recommended?.recent?.profit) },
+    { title: '命中', width: 76, render: (_, row) => pct(row.recommended?.hit_rate) },
+    { title: '最高阶', width: 76, render: (_, row) => `${row.recommended?.max_tier_reached || 1}阶` },
+    { title: '回撤', width: 82, render: (_, row) => Number(row.recommended?.max_drawdown || 0).toFixed(2) },
+    { title: '理由', width: 280, render: (_, row) => <Text type="secondary">{(row.recommended?.reasons || []).join('；') || '-'}</Text> },
+    {
+      title: '操作',
+      width: 86,
+      fixed: 'right',
+      render: (_, row) => (
+        <Button size="small" type="link" disabled={!row.recommended} onClick={() => applyRecommendation(row)}>
+          应用
+        </Button>
+      ),
+    },
+  ], [form])
   const isRunning = status === 'running'
   const hasMultipleAccounts = accountList.length > 1
   const saveButtonText = hasMultipleAccounts ? '保存并运行新增账号' : '仅保存配置'
+  const summary = analysis?.summary
 
   return (
     <div style={{ padding: 24 }}>
@@ -253,6 +406,9 @@ export default function CustomRotateBetPage() {
           {STATUS_TAG[status] ?? STATUS_TAG.stopped}
         </Space>
         <Space>
+          <Button icon={<BarChartOutlined />} onClick={handleAnalyze} loading={analyzing}>
+            分析当前配置
+          </Button>
           <Button icon={<PlayCircleOutlined />} type="primary" onClick={handleStartNow} loading={loading} disabled={isRunning}>
             保存并随开随跑
           </Button>
