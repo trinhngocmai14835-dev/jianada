@@ -94,3 +94,27 @@ def test_custom_win_analysis_api_uses_saved_draw_records(tmp_path):
         assert len(data["positions"]) == 3
     finally:
         core_db.DB_PATH = old_path
+
+
+def test_custom_win_analysis_returns_number_recommendations():
+    result = analyze_custom_winbet_config(CONFIG, records=sample_draw_records(120))
+    recs = result["recommendations"]
+
+    assert result["ok"] is True
+    assert recs["mode"] == "custom_winbet"
+    assert recs["records"] == 120
+    assert recs["replace_count"] >= 0
+    assert recs["open_count"] >= 0
+    assert len(recs["positions"]) == 3
+
+    for row in recs["positions"]:
+        assert row["position"] in (1, 2, 3)
+        assert row["action"] in {"保持当前", "建议替换", "差距不大", "不建议替换", "暂无推荐"}
+        assert row["enabled_advice"] in {"建议开启/保留", "谨慎开启", "建议关闭"}
+        assert row["recommended"] is not None
+        assert len(row["recommended"]["set_a"]) in (4, 5)
+        assert len(row["recommended"]["set_b"]) in (4, 5)
+        assert row["recommended"]["reasons"]
+        assert len(row["candidates"]) >= 1
+        scores = [item["score"] for item in row["candidates"]]
+        assert scores == sorted(scores, reverse=True)

@@ -109,6 +109,35 @@ function profitTag(value) {
   return <Tag color={n > 0 ? 'green' : n < 0 ? 'red' : 'default'}>{money(n)}</Tag>
 }
 
+function numberTags(values, color = 'geekblue') {
+  return (
+    <Space size={[4, 4]} wrap>
+      {(values || []).map((value) => <Tag color={color} key={value}>{value}</Tag>)}
+    </Space>
+  )
+}
+
+function recommendationSet(row, label) {
+  const candidate = row.recommended || {}
+  const nums = label === 'A' ? candidate.set_a : candidate.set_b
+  return (
+    <Space direction="vertical" size={2}>
+      <Text>{label}组</Text>
+      {numberTags(nums, label === 'A' ? 'blue' : 'purple')}
+    </Space>
+  )
+}
+
+function recommendationActionTag(value) {
+  const color = value === '建议替换' ? 'blue' : value === '保持当前' ? 'green' : value === '不建议替换' ? 'red' : 'default'
+  return <Tag color={color}>{value || '-'}</Tag>
+}
+
+function enabledAdviceTag(value) {
+  const color = value === '建议开启/保留' ? 'green' : value === '谨慎开启' ? 'gold' : 'red'
+  return <Tag color={color}>{value || '-'}</Tag>
+}
+
 function riskColor(value) {
   if (value === '低') return 'green'
   if (value === '中' || value === '样本不足') return 'gold'
@@ -330,6 +359,45 @@ export default function CustomWinBetPage() {
     { title: 'B组', width: 190, render: (_, row) => setMetric(row, 'B') },
     { title: '建议', dataIndex: 'advice', width: 190 },
   ], [])
+
+  const applyRecommendation = (row) => {
+    const candidate = row.recommended
+    const pos = Number(row.position) - 1
+    if (!candidate || pos < 0 || pos >= 3) return
+    const nextSets = [...(form.getFieldValue('number_sets') || [])]
+    while (nextSets.length < 3) nextSets.push({ set_a: '', set_b: '' })
+    nextSets[pos] = {
+      ...(nextSets[pos] || {}),
+      set_a: (candidate.set_a || []).join(','),
+      set_b: (candidate.set_b || []).join(','),
+    }
+    form.setFieldsValue({ number_sets: nextSets })
+    message.success(`${row.name} 已应用推荐号码`)
+  }
+
+  const recommendationColumns = useMemo(() => [
+    { title: '球路', dataIndex: 'name', width: 72 },
+    { title: '动作', dataIndex: 'action', width: 96, render: recommendationActionTag },
+    { title: '开关', dataIndex: 'enabled_advice', width: 116, render: enabledAdviceTag },
+    { title: '推荐A组', width: 128, render: (_, row) => recommendationSet(row, 'A') },
+    { title: '推荐B组', width: 128, render: (_, row) => recommendationSet(row, 'B') },
+    { title: '组数', width: 72, render: (_, row) => row.recommended?.size_label || '-' },
+    { title: '利润', width: 88, render: (_, row) => profitTag(row.recommended?.profit) },
+    { title: '命中', width: 76, render: (_, row) => pct(row.recommended?.hit_rate) },
+    { title: '回撤', width: 82, render: (_, row) => Number(row.recommended?.max_drawdown || 0).toFixed(2) },
+    { title: '评分', width: 82, render: (_, row) => Number(row.recommended?.score || 0).toFixed(2) },
+    { title: '理由', width: 260, render: (_, row) => <Text type="secondary">{(row.recommended?.reasons || []).join('；') || '-'}</Text> },
+    {
+      title: '操作',
+      width: 86,
+      fixed: 'right',
+      render: (_, row) => (
+        <Button size="small" type="link" disabled={!row.recommended} onClick={() => applyRecommendation(row)}>
+          应用
+        </Button>
+      ),
+    },
+  ], [form])
 
   const isRunning = status === 'running'
   const joinMode = isRunning && accountList.length > 1
@@ -563,6 +631,26 @@ export default function CustomWinBetPage() {
                 {(analysis.suggestions || []).map((item, index) => (
                   <Alert key={`${item.level}-${index}`} type={suggestionType(item.level)} showIcon message={item.text} />
                 ))}
+                {analysis.recommendations && (
+                  <>
+                    <Divider orientation="left" plain>赢冲号码推荐</Divider>
+                    <Alert
+                      type="info"
+                      showIcon
+                      message={`已回测 ${analysis.recommendations.records} 条开奖记录，建议替换 ${analysis.recommendations.replace_count} 路，建议开启/保留 ${analysis.recommendations.open_count} 路。`}
+                      description={analysis.recommendations.method}
+                    />
+                    <Table
+                      size="small"
+                      rowKey="position"
+                      columns={recommendationColumns}
+                      dataSource={analysis.recommendations.positions || []}
+                      pagination={false}
+                      scroll={{ x: 1340 }}
+                    />
+                    <Divider orientation="left" plain>当前配置回测</Divider>
+                  </>
+                )}
                 <Table
                   size="small"
                   rowKey="position"

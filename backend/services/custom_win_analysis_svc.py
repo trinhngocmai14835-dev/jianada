@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from itertools import combinations
 from typing import Any
 
 from services.custom_win_bet_svc import (
@@ -17,6 +18,7 @@ from services.rotate_bet_svc import _parse_enabled_positions, _parse_entry_miss_
 
 BALL_LABELS = ["第一球", "第二球", "第三球"]
 DEFAULT_NUMBER_ODDS = 9.92
+DIGITS = tuple(range(10))
 
 
 @dataclass
@@ -188,6 +190,303 @@ def _build_suggestions(summary: dict[str, Any], positions: list[dict[str, Any]],
     return suggestions
 
 
+def _candidate_score(metric: dict[str, Any]) -> float:
+    return _round(
+        float(metric.get("profit") or 0)
+        + float(metric.get("roi") or 0) * 120
+        + float(metric.get("hit_rate") or 0) * 20
+        + float(metric.get("max_win_streak") or 0) * 1.5
+        - float(metric.get("max_drawdown") or 0) * 0.35
+        - float(metric.get("max_miss_streak") or 0) * 1.2,
+        4,
+    )
+
+
+def _group_heuristic(records: list[DrawRecord], position: int, group: tuple[int, ...]) -> float:
+    recent = records[-min(80, len(records)):]
+    group_set = set(group)
+    total_rate = sum(1 for record in records if record.numbers[position] in group_set) / len(records)
+    recent_rate = sum(1 for record in recent if record.numbers[position] in group_set) / len(recent) if recent else total_rate
+    transitions = hits = 0
+    for prev, curr in zip(records, records[1:]):
+        if prev.numbers[position] in group_set:
+            transitions += 1
+            if curr.numbers[position] in group_set:
+                hits += 1
+    transition_rate = hits / transitions if transitions >= 5 else recent_rate
+    current_miss = 0
+    for record in reversed(records):
+        if record.numbers[position] in group_set:
+            break
+        current_miss += 1
+    return (recent_rate * 70) + (total_rate * 35) + (transition_rate * 35) + min(current_miss, 10) * 0.8
+
+
+def _rank_groups(records: list[DrawRecord], position: int, size: int, top: int = 42) -> list[tuple[tuple[int, ...], float]]:
+    ranked = [(tuple(combo), _group_heuristic(records, position, tuple(combo))) for combo in combinations(DIGITS, size)]
+    ranked.sort(key=lambda item: item[1], reverse=True)
+    return ranked[:top]
+
+
+def _simulate_position_candidate(
+    records: list[DrawRecord],
+    position: int,
+    set_a: list[int],
+    set_b: list[int],
+    amount_steps: list[int],
+    entry_misses: int,
+    odds: float,
+    rebate_rate: float,
+) -> dict[str, Any]:
+    path = _CustomWinPathState(amount_steps, entry_misses)
+    metric = Metric()
+    set_metrics = {"A": Metric(), "B": Metric()}
+    tier_metrics = [Metric() for _ in amount_steps]
+    max_tier_reached = 1
+
+    def current_target() -> list[int]:
+        return list(set_a if path.set_idx == 0 else set_b)
+
+    def observe(record: DrawRecord, target: list[int] | None = None, rotate_after: bool = False) -> None:
+        if path.active:
+            return
+        nums = target if target is not None else current_target()
+        path.observe_entry(record.numbers[position] in nums)
+        if rotate_after:
+            path.rotate()
+
+    def make_plan():
+        if not path.active:
+            return None
+        plan = {
+            "target": current_target(),
+            "amount": path.get_bet(),
+            "tier": path.tier_index,
+            "set": _set_label(path),
+        }
+        path.rotate()
+        return plan
+
+    pending = make_plan()
+    settled = 0
+    for record in records[1:]:
+        if pending:
+            target = list(pending["target"])
+            amount = int(pending["amount"])
+            tier_index = min(int(pending["tier"]), len(amount_steps) - 1)
+            set_label = str(pending["set"])
+            hit = record.numbers[position] in target
+            stake, profit = _settle_number_group(amount, len(target), hit, odds, rebate_rate)
+            metric.add(stake, profit, hit)
+            set_metrics[set_label].add(stake, profit, hit)
+            tier_metrics[tier_index].add(stake, profit, hit)
+            max_tier_reached = max(max_tier_reached, tier_index + 1)
+            if hit:
+                path.on_win()
+            else:
+                path.on_lose()
+            observe(record, target=target)
+            pending = None
+            settled += 1
+        else:
+            observe(record, rotate_after=True)
+        pending = make_plan()
+
+    out = _metric_dict(metric)
+    out.update(
+        {
+            "set_a": list(set_a),
+            "set_b": list(set_b),
+            "group_size": [len(set_a), len(set_b)],
+            "size_label": f"{len(set_a)}/{len(set_b)}",
+            "sets": {label: _metric_dict(value) for label, value in set_metrics.items()},
+            "tiers": [
+                {"tier": index + 1, "amount": amount_steps[index], **_metric_dict(item)}
+                for index, item in enumerate(tier_metrics)
+            ],
+            "max_tier_reached": max_tier_reached,
+            "settled_issues": settled,
+        }
+    )
+    out["score"] = _candidate_score(out)
+    return out
+
+
+def _candidate_pairs(
+    records: list[DrawRecord],
+    position: int,
+    current_a: list[int],
+    current_b: list[int],
+    max_pairs: int = 360,
+) -> list[tuple[list[int], list[int], str]]:
+    groups_by_size = {
+        4: _rank_groups(records, position, 4),
+        5: _rank_groups(records, position, 5),
+    }
+    group_scores = {group: score for items in groups_by_size.values() for group, score in items}
+    raw: list[tuple[float, tuple[int, ...], tuple[int, ...], str]] = []
+
+    def add_pair(a, b, source: str, priority: float | None = None) -> None:
+        a_tuple = tuple(sorted(int(v) for v in a))
+        b_tuple = tuple(sorted(int(v) for v in b))
+        if len(a_tuple) not in (4, 5) or len(b_tuple) not in (4, 5):
+            return
+        if len(set(a_tuple)) != len(a_tuple) or len(set(b_tuple)) != len(b_tuple):
+            return
+        if priority is None:
+            priority = group_scores.get(a_tuple, 0.0) + group_scores.get(b_tuple, 0.0)
+        raw.append((priority, a_tuple, b_tuple, source))
+
+    add_pair(current_a, current_b, "current", 9999.0)
+    for combo in combinations(DIGITS, 5):
+        a = tuple(combo)
+        b = tuple(d for d in DIGITS if d not in a)
+        priority = _group_heuristic(records, position, a) + _group_heuristic(records, position, b) + 4
+        add_pair(a, b, "5/5", priority)
+
+    pool = groups_by_size[4] + groups_by_size[5]
+    for a, a_score in pool:
+        a_set = set(a)
+        for b, b_score in pool:
+            if a_set.intersection(b):
+                continue
+            add_pair(a, b, "ranked", a_score + b_score)
+
+    raw.sort(key=lambda item: item[0], reverse=True)
+    result = []
+    seen = set()
+    for _priority, a, b, source in raw:
+        key = (a, b)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append((list(a), list(b), source))
+        if len(result) >= max_pairs:
+            break
+    return result
+
+
+def _candidate_reasons(candidate: dict[str, Any], current: dict[str, Any] | None) -> list[str]:
+    reasons = [
+        f"{candidate['size_label']}个号轮换",
+        f"回测利润 {candidate['profit']}",
+        f"命中 {candidate['hit_rate'] * 100:.1f}%",
+        f"最大回撤 {candidate['max_drawdown']}",
+    ]
+    if current:
+        diff = float(candidate.get("profit") or 0) - float(current.get("profit") or 0)
+        if diff > 0:
+            reasons.append(f"比当前配置多 {diff:.2f}")
+        elif diff < 0:
+            reasons.append(f"比当前配置少 {abs(diff):.2f}")
+    if candidate.get("max_tier_reached", 1) >= 4:
+        reasons.append(f"最高触达 {candidate['max_tier_reached']} 阶")
+    return reasons
+
+
+def _recommend_position_groups(
+    records: list[DrawRecord],
+    position: int,
+    current_a: list[int],
+    current_b: list[int],
+    amount_steps: list[int],
+    entry_misses: int,
+    odds: float,
+    rebate_rate: float,
+    current_position: dict[str, Any],
+) -> dict[str, Any]:
+    evaluated = []
+    current_key = (tuple(sorted(current_a)), tuple(sorted(current_b)))
+    current_candidate = None
+    for set_a, set_b, source in _candidate_pairs(records, position, current_a, current_b):
+        metric = _simulate_position_candidate(records, position, set_a, set_b, amount_steps, entry_misses, odds, rebate_rate)
+        metric["source"] = source
+        metric["is_current"] = (tuple(metric["set_a"]), tuple(metric["set_b"])) == current_key
+        if metric["is_current"]:
+            current_candidate = metric
+        evaluated.append(metric)
+
+    evaluated.sort(key=lambda item: item["score"], reverse=True)
+    top = evaluated[0] if evaluated else None
+    if current_candidate is None:
+        current_candidate = _simulate_position_candidate(records, position, current_a, current_b, amount_steps, entry_misses, odds, rebate_rate)
+        current_candidate["source"] = "current"
+        current_candidate["is_current"] = True
+
+    if not top:
+        action = "暂无推荐"
+    elif top.get("is_current"):
+        action = "保持当前"
+    elif top.get("profit", 0) <= 0:
+        action = "不建议替换"
+    else:
+        improvement = float(top.get("profit") or 0) - float(current_candidate.get("profit") or 0)
+        threshold = max(abs(float(current_candidate.get("profit") or 0)) * 0.08, 10.0)
+        action = "建议替换" if improvement >= threshold else "差距不大"
+
+    enabled_advice = "建议关闭"
+    if top and top.get("profit", 0) > 0:
+        enabled_advice = "谨慎开启" if top.get("max_drawdown", 0) > max(top.get("profit", 0) * 2.5, 1) else "建议开启/保留"
+
+    top_candidates = [{**candidate, "reasons": _candidate_reasons(candidate, current_candidate)} for candidate in evaluated[:5]]
+    recommended = {**top, "reasons": _candidate_reasons(top, current_candidate)} if top else None
+    current_out = {
+        "set_a": list(current_a),
+        "set_b": list(current_b),
+        "profit": current_position.get("profit", 0),
+        "roi": current_position.get("roi", 0),
+        "hit_rate": current_position.get("hit_rate", 0),
+        "max_drawdown": current_position.get("max_drawdown", 0),
+        "max_tier_reached": current_position.get("max_tier_reached", 1),
+    }
+    return {
+        "position": position + 1,
+        "name": BALL_LABELS[position],
+        "action": action,
+        "enabled_advice": enabled_advice,
+        "current": current_out,
+        "recommended": recommended,
+        "candidates": top_candidates,
+    }
+
+
+def _build_number_recommendations(
+    records: list[DrawRecord],
+    number_sets,
+    positions: list[dict[str, Any]],
+    amount_steps: list[int],
+    entry_misses: int,
+    odds: float,
+    rebate_rate: float,
+) -> dict[str, Any]:
+    by_position = []
+    for pos in range(NUM_POSITIONS):
+        by_position.append(
+            _recommend_position_groups(
+                records,
+                pos,
+                list(number_sets[pos][0]),
+                list(number_sets[pos][1]),
+                amount_steps,
+                entry_misses,
+                odds,
+                rebate_rate,
+                positions[pos],
+            )
+        )
+
+    replace_count = sum(1 for row in by_position if row.get("action") == "建议替换")
+    open_count = sum(1 for row in by_position if row.get("enabled_advice") == "建议开启/保留")
+    return {
+        "mode": "custom_winbet",
+        "records": len(records),
+        "method": "按赢冲状态机回测候选 A/B 号码组，优先看利润、ROI、最大回撤、最长不中和最高触达阶数。",
+        "replace_count": replace_count,
+        "open_count": open_count,
+        "positions": by_position,
+    }
+
+
 def analyze_custom_winbet_config(config: dict[str, Any], records: Any = None, text: str = "", limit: int = 1000) -> dict[str, Any]:
     cfg = dict(config or {})
     normalized = normalize_draw_records(records, text)
@@ -306,10 +605,13 @@ def analyze_custom_winbet_config(config: dict[str, Any], records: Any = None, te
         row["advice"] = _position_advice(row)
         positions.append(row)
 
+    recommendations = _build_number_recommendations(normalized, number_sets, positions, amount_steps, entry_misses, odds, rebate_rate)
+
     return {
         "ok": True,
         "summary": summary,
         "positions": positions,
+        "recommendations": recommendations,
         "suggestions": _build_suggestions(summary, positions, amount_steps),
         "recent_records": [
             {
