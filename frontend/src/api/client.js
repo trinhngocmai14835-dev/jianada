@@ -51,6 +51,8 @@ export const api = {
 
   // 状态
   getStatus: () => req('GET', '/status'),
+  analyzeDraws: (data) => req('POST', '/draw-analysis/analyze', data),
+  getDrawAnalysisSample: (limit = 160) => req('GET', '/draw-analysis/sample?limit=' + encodeURIComponent(limit)),
 
   // 软件更新
   checkUpdate: () => req('GET', '/update/check'),

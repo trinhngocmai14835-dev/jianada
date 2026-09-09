@@ -28,6 +28,7 @@ from services.main_trend_bet_svc import (
 )
 from services.account_whitelist import get_account_whitelist_status, check_accounts_allowed
 from services.updater import check_for_update, get_update_install_status, start_update_install
+from services.draw_analysis_svc import analyze_draw_payload, sample_draw_records, sample_draw_text
 
 router = APIRouter()
 
@@ -656,6 +657,25 @@ def open_follower_browser(req: OpenBrowserRequest):
 
 # ── 投注流水 ──────────────────────────────────────────────────
 
+
+
+class DrawAnalysisRequest(BaseModel):
+    text: str = ""
+    records: list[dict[str, Any]] = []
+    lookback: int = 80
+    backtest_window: int = 300
+    group_size: int = 5
+
+
+@router.post("/draw-analysis/analyze")
+def api_draw_analysis(req: DrawAnalysisRequest):
+    data = req.model_dump() if hasattr(req, "model_dump") else req.dict()
+    return analyze_draw_payload(data)
+
+
+@router.get("/draw-analysis/sample")
+def api_draw_analysis_sample(limit: int = 160):
+    return {"records": sample_draw_records(limit), "text": sample_draw_text(limit)}
 @router.get("/flow")
 def api_get_flow(account: str = "", mode: str = "", limit: int = 800):
     return {"records": get_flow(account or None, mode or None, limit)}

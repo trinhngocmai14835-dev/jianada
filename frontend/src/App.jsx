@@ -11,6 +11,7 @@ import {
   SafetyOutlined,
   ProfileOutlined,
   RetweetOutlined,
+  BarChartOutlined,
 } from '@ant-design/icons'
 import { api } from './api/client'
 import LicensePage from './pages/LicensePage'
@@ -24,6 +25,7 @@ import RotateBetPage from './pages/RotateBetPage'
 import CustomRotateBetPage from './pages/CustomRotateBetPage'
 import CustomWinBetPage from './pages/CustomWinBetPage'
 import MainTrendBetPage from './pages/MainTrendBetPage'
+import DrawAnalysisPage from './pages/DrawAnalysisPage'
 
 const { Sider, Content, Header } = Layout
 const { Text } = Typography
@@ -38,6 +40,7 @@ const NAV_ITEMS = [
   { key: '/custom-rotatebet', icon: <RetweetOutlined />, label: '自定义金额轮换追损' },
   { key: '/custom-winbet', icon: <RetweetOutlined />, label: '自定义金额轮换赢冲' },
   { key: '/main-trend-bet', icon: <RetweetOutlined />, label: '主势大小单双追损' },
+  { key: '/draw-analysis', icon: <BarChartOutlined />, label: '开奖记录分析推荐' },
   { key: '/flow', icon: <ProfileOutlined />, label: '投注流水' },
   { key: '/license', icon: <KeyOutlined />, label: '授权管理' },
 ]
@@ -84,6 +87,7 @@ function AppLayout({ licenseInfo, onReload }) {
             <Route path="/custom-rotatebet" element={<CustomRotateBetPage />} />
             <Route path="/custom-winbet" element={<CustomWinBetPage />} />
             <Route path="/main-trend-bet" element={<MainTrendBetPage />} />
+            <Route path="/draw-analysis" element={<DrawAnalysisPage />} />
             <Route path="/flow" element={<FlowPage />} />
             <Route path="/license" element={
               <div style={{ padding: 24 }}>
