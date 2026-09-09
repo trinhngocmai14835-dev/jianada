@@ -3,7 +3,8 @@ from pydantic import BaseModel
 from typing import Any
 
 from core.db import (get_config, set_config, get_license, save_license,
-                     get_flow, flow_accounts, clear_flow)
+                     get_flow, flow_accounts, clear_flow,
+                     add_draw_records, get_draw_records, clear_draw_records)
 from core.license import get_machine_id, validate_license
 from core.task_manager import TaskManager
 from services.auto_bet_svc import run as auto_bet_run
@@ -28,7 +29,8 @@ from services.main_trend_bet_svc import (
 )
 from services.account_whitelist import get_account_whitelist_status, check_accounts_allowed
 from services.updater import check_for_update, get_update_install_status, start_update_install
-from services.draw_analysis_svc import analyze_draw_payload, sample_draw_records, sample_draw_text
+from services.draw_analysis_svc import analyze_draw_payload, analyze_draws, sample_draw_records, sample_draw_text
+from services.draw_capture_svc import capture_draw_records_from_chrome
 
 router = APIRouter()
 
@@ -659,6 +661,14 @@ def open_follower_browser(req: OpenBrowserRequest):
 
 
 
+class DrawCaptureRequest(BaseModel):
+    port: int = 9333
+    limit: int = 500
+    save: bool = True
+    lookback: int = 80
+    backtest_window: int = 300
+    group_size: int = 5
+
 class DrawAnalysisRequest(BaseModel):
     text: str = ""
     records: list[dict[str, Any]] = []
@@ -676,6 +686,44 @@ def api_draw_analysis(req: DrawAnalysisRequest):
 @router.get("/draw-analysis/sample")
 def api_draw_analysis_sample(limit: int = 160):
     return {"records": sample_draw_records(limit), "text": sample_draw_text(limit)}
+
+
+@router.post("/draw-analysis/capture")
+def api_draw_analysis_capture(req: DrawCaptureRequest):
+    data = req.model_dump() if hasattr(req, "model_dump") else req.dict()
+    captured = capture_draw_records_from_chrome(port=data.get("port") or 9333, limit=data.get("limit") or 500)
+    if not captured.get("ok"):
+        return captured
+    records = captured.get("records") or []
+    saved = add_draw_records(records, "browser") if data.get("save", True) else 0
+    analysis = analyze_draws(
+        records=records,
+        lookback=data.get("lookback") or 80,
+        backtest_window=data.get("backtest_window") or data.get("backtestWindow") or 300,
+        group_size=data.get("group_size") or data.get("groupSize") or 5,
+    )
+    return {**captured, "saved": saved, "analysis": analysis}
+
+
+@router.get("/draw-analysis/records")
+def api_draw_analysis_records(limit: int = 1000):
+    records = get_draw_records(limit)
+    return {"records": records, "text": _draw_records_text(records)}
+
+
+@router.post("/draw-analysis/records/clear")
+def api_draw_analysis_records_clear():
+    clear_draw_records()
+    return {"ok": True}
+
+
+def _draw_records_text(records: list[dict[str, Any]]) -> str:
+    lines = []
+    for record in reversed(records or []):
+        nums = record.get("numbers") or []
+        if len(nums) >= 3:
+            lines.append(f"{record.get('issue', '')} {nums[0]} {nums[1]} {nums[2]}")
+    return "\n".join(lines)
 @router.get("/flow")
 def api_get_flow(account: str = "", mode: str = "", limit: int = 800):
     return {"records": get_flow(account or None, mode or None, limit)}

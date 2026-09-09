@@ -98,6 +98,7 @@ pyinstaller ^
   --hidden-import "services.custom_rotate_bet_svc" ^
   --hidden-import "services.custom_win_bet_svc" ^
   --hidden-import "services.draw_analysis_svc" ^
+  --hidden-import "services.draw_capture_svc" ^
   --hidden-import "services.main_trend_bet_svc" ^
   --hidden-import "services.settlement_guard" ^
   --hidden-import "services.account_whitelist" ^

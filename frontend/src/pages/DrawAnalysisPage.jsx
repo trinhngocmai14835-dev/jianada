@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react'
-import { Alert, Button, Card, Col, Empty, Input, InputNumber, Row, Space, Statistic, Table, Tag, Typography, message } from 'antd'
-import { BarChartOutlined, ExperimentOutlined, SearchOutlined } from '@ant-design/icons'
+import { Alert, Button, Card, Col, Empty, Input, InputNumber, Popconfirm, Row, Space, Statistic, Table, Tag, Typography, message } from 'antd'
+import { BarChartOutlined, ChromeOutlined, DatabaseOutlined, DeleteOutlined, ExperimentOutlined, SearchOutlined } from '@ant-design/icons'
 import { api } from '../api/client'
 
 const { Title, Text, Paragraph } = Typography
@@ -31,6 +31,23 @@ function actionTag(action, target) {
   return <Tag color="blue">{target || action}</Tag>
 }
 
+function recordsToText(records) {
+  const ordered = [...(records || [])].sort((a, b) => {
+    const ai = Number.parseInt(a?.issue, 10)
+    const bi = Number.parseInt(b?.issue, 10)
+    if (Number.isFinite(ai) && Number.isFinite(bi)) return ai - bi
+    return String(a?.issue || '').localeCompare(String(b?.issue || ''))
+  })
+  return ordered
+    .map((record) => {
+      const nums = record?.numbers || []
+      if (nums.length < 3) return ''
+      return `${record.issue || ''} ${nums[0]} ${nums[1]} ${nums[2]}`.trim()
+    })
+    .filter(Boolean)
+    .join('\n')
+}
+
 function BacktestView({ value }) {
   if (!value) return <Text type="secondary">-</Text>
   return (
@@ -58,7 +75,10 @@ export default function DrawAnalysisPage() {
   const [lookback, setLookback] = useState(80)
   const [backtestWindow, setBacktestWindow] = useState(300)
   const [groupSize, setGroupSize] = useState(5)
+  const [capturePort, setCapturePort] = useState(9333)
+  const [captureLimit, setCaptureLimit] = useState(500)
   const [loading, setLoading] = useState(false)
+  const [captureLoading, setCaptureLoading] = useState(false)
   const [result, setResult] = useState(null)
 
   const runAnalyze = async (nextText = text) => {
@@ -73,6 +93,63 @@ export default function DrawAnalysisPage() {
       setResult(data)
       if (data?.ok === false) message.warning(data.message || '开奖记录不足')
       return data
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const captureRealRecords = async () => {
+    setCaptureLoading(true)
+    try {
+      const data = await api.captureDrawRecords({
+        port: capturePort,
+        limit: captureLimit,
+        save: true,
+        lookback,
+        backtest_window: backtestWindow,
+        group_size: groupSize,
+      })
+      if (data?.ok === false) {
+        setResult(data)
+        message.warning(data.message || '抓取失败')
+        return data
+      }
+      const nextText = recordsToText(data.records || [])
+      setText(nextText)
+      setResult(data.analysis || null)
+      message.success(`${data.message || '抓取完成'}，保存 ${data.saved || 0} 条`)
+      return data
+    } finally {
+      setCaptureLoading(false)
+    }
+  }
+
+  const loadSavedRecords = async () => {
+    setLoading(true)
+    try {
+      const data = await api.getSavedDrawRecords(captureLimit)
+      const records = data.records || []
+      if (!records.length) {
+        message.warning('本地还没有保存开奖记录')
+        return
+      }
+      const nextText = data.text || recordsToText(records)
+      setText(nextText)
+      await runAnalyze(nextText)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const clearSavedRecords = async () => {
+    setLoading(true)
+    try {
+      const data = await api.clearSavedDrawRecords()
+      if (data?.ok === false) {
+        message.error(data.message || '清空失败')
+      } else {
+        message.success('已清空本地开奖记录')
+      }
     } finally {
       setLoading(false)
     }
@@ -129,15 +206,40 @@ export default function DrawAnalysisPage() {
       <Space style={{ marginBottom: 24, width: '100%', justifyContent: 'space-between' }} align="center" wrap>
         <Title level={4} style={{ margin: 0 }}>开奖记录分析推荐</Title>
         <Space wrap>
+          <Button type="primary" icon={<ChromeOutlined />} onClick={captureRealRecords} loading={captureLoading}>从已登录浏览器抓取</Button>
+          <Button icon={<DatabaseOutlined />} onClick={loadSavedRecords} loading={loading}>读取已保存记录</Button>
           <Button icon={<ExperimentOutlined />} onClick={loadSample} loading={loading}>载入测试样本</Button>
-          <Button type="primary" icon={<SearchOutlined />} onClick={() => runAnalyze()} loading={loading}>分析推荐</Button>
+          <Button icon={<SearchOutlined />} onClick={() => runAnalyze()} loading={loading}>分析推荐</Button>
         </Space>
       </Space>
 
       <Row gutter={[16, 16]}>
         <Col xs={24} xl={9}>
-          <Card title="开奖记录" style={{ borderRadius: 8 }}>
+          <Card title="真实数据采集" style={{ borderRadius: 8, marginBottom: 16 }}>
             <Space wrap style={{ marginBottom: 12 }}>
+              <Space direction="vertical" size={4}>
+                <Text type="secondary">浏览器端口</Text>
+                <InputNumber min={1} max={65535} value={capturePort} onChange={(v) => setCapturePort(v || 9333)} />
+              </Space>
+              <Space direction="vertical" size={4}>
+                <Text type="secondary">抓取上限</Text>
+                <InputNumber min={20} max={2000} value={captureLimit} onChange={(v) => setCaptureLimit(v || 500)} />
+              </Space>
+            </Space>
+            <Space wrap>
+              <Button type="primary" icon={<ChromeOutlined />} onClick={captureRealRecords} loading={captureLoading}>抓取并分析</Button>
+              <Button icon={<DatabaseOutlined />} onClick={loadSavedRecords} loading={loading}>读取保存</Button>
+              <Popconfirm title="清空本地保存的开奖记录？" okText="清空" cancelText="取消" onConfirm={clearSavedRecords}>
+                <Button danger icon={<DeleteOutlined />} loading={loading}>清空</Button>
+              </Popconfirm>
+            </Space>
+            <Paragraph type="secondary" style={{ margin: '10px 0 0', fontSize: 12 }}>
+              先用调试端口浏览器登录并打开“开奖结果”，再抓取当前列表。
+            </Paragraph>
+          </Card>
+
+          <Card title="分析参数" style={{ borderRadius: 8, marginBottom: 16 }}>
+            <Space wrap>
               <Space direction="vertical" size={4}>
                 <Text type="secondary">分析窗口</Text>
                 <InputNumber min={10} max={500} value={lookback} onChange={(v) => setLookback(v || 80)} />
@@ -151,14 +253,17 @@ export default function DrawAnalysisPage() {
                 <InputNumber min={1} max={9} value={groupSize} onChange={(v) => setGroupSize(v || 5)} />
               </Space>
             </Space>
+          </Card>
+
+          <Card title="开奖记录" style={{ borderRadius: 8 }}>
             <TextArea
               value={text}
               onChange={(e) => setText(e.target.value)}
-              autoSize={{ minRows: 18, maxRows: 28 }}
+              autoSize={{ minRows: 16, maxRows: 28 }}
               placeholder="3500001 1 2 3"
             />
             <Paragraph type="secondary" style={{ margin: '10px 0 0', fontSize: 12 }}>
-              每行一条：期号 第一球 第二球 第三球，也支持带“期号”“开奖”的文本。
+              每行一条：期号 第一球 第二球 第三球。
             </Paragraph>
           </Card>
         </Col>
@@ -213,8 +318,8 @@ export default function DrawAnalysisPage() {
                   <Col xs={24} md={8} key={item.position}>
                     <Card title={item.name} style={{ borderRadius: 8 }}>
                       <Space direction="vertical" size={8}>
-                        <Text>热号：{digitTags((item.hot || []).map((v) => v.value))}</Text>
-                        <Text>冷号：{digitTags((item.cold || []).map((v) => v.value))}</Text>
+                        <Space>热号：{digitTags((item.hot || []).map((v) => v.value))}</Space>
+                        <Space>冷号：{digitTags((item.cold || []).map((v) => v.value))}</Space>
                         <Text type="secondary">最大遗漏：{Math.max(...(item.omissions || []).map((v) => v.miss))} 期</Text>
                       </Space>
                     </Card>

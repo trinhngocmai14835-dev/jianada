@@ -12,6 +12,8 @@ from services.draw_analysis_svc import (  # noqa: E402
     parse_draw_text,
     sample_draw_records,
 )
+from services.draw_capture_svc import parse_browser_rows  # noqa: E402
+from core import db as core_db  # noqa: E402
 
 
 def test_parse_draw_text_accepts_common_formats_and_dedupes():
@@ -76,3 +78,55 @@ def test_analyze_draws_returns_recommendations_and_backtests():
         assert item["action"] in {"投注候选组", "跳过"}
         assert item["confidence"] in {"低", "中", "高"}
         assert "backtest" in item
+
+def test_parse_browser_rows_extracts_real_result_table_shape():
+    rows = [
+        {"issue": "3479869", "draw_time": "09-09 16:33", "numbers": [0, "1", 0]},
+        {"issue": "3479870", "draw_time": "09-09 16:36", "numbers": [4, 4, 5]},
+        {"issue": "bad", "draw_time": "", "numbers": [1, 2]},
+        {"issue": "3479871", "draw_time": "09-09 16:39", "numbers": [4, 5, 5]},
+    ]
+
+    records = parse_browser_rows(rows, limit=10)
+
+    assert [r["issue"] for r in records] == ["3479869", "3479870", "3479871"]
+    assert records[0]["numbers"] == [0, 1, 0]
+    assert records[0]["total"] == 1
+    assert records[0]["dx"] == "小"
+    assert records[0]["ds"] == "单"
+    assert records[1]["total"] == 13
+    assert records[1]["special"] is True
+    assert records[2]["total"] == 14
+    assert records[2]["dx"] == "大"
+    assert records[2]["ds"] == "双"
+
+
+def test_draw_record_db_persists_and_overwrites(tmp_path):
+    old_path = core_db.DB_PATH
+    core_db.DB_PATH = str(tmp_path / "draws.db")
+    try:
+        core_db.init_db()
+        saved = core_db.add_draw_records([
+            {"issue": "1001", "draw_time": "09-09 10:00", "numbers": [1, 2, 3]},
+            {"issue": "1002", "draw_time": "09-09 10:03", "numbers": [4, 4, 5]},
+        ], source="test")
+        assert saved == 2
+
+        saved = core_db.add_draw_records([
+            {"issue": "1001", "draw_time": "09-09 10:01", "numbers": [9, 0, 0]},
+        ], source="browser")
+        assert saved == 1
+
+        records = core_db.get_draw_records(10)
+        assert [r["issue"] for r in records] == ["1002", "1001"]
+        updated = next(r for r in records if r["issue"] == "1001")
+        assert updated["numbers"] == [9, 0, 0]
+        assert updated["total"] == 9
+        assert updated["dx"] == "小"
+        assert updated["ds"] == "单"
+        assert updated["source"] == "browser"
+
+        core_db.clear_draw_records()
+        assert core_db.get_draw_records(10) == []
+    finally:
+        core_db.DB_PATH = old_path
