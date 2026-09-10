@@ -8,9 +8,7 @@ import { api } from '../api/client'
 const { Title, Text } = Typography
 
 const MODE_LABEL = {
-  autobet: '自动下注',
   rushbet: '赢冲输缩',
-  pickbet: '自选号赢冲',
   followbet: '多账号跟投',
   rotatebet: '轮换追损',
   custom_rotatebet: '自定义金额轮换追损',
@@ -18,7 +16,7 @@ const MODE_LABEL = {
   main_trend_bet: '主势大小单双追损',
 }
 const MODE_COLOR = {
-  autobet: 'blue', rushbet: 'volcano', pickbet: 'geekblue', followbet: 'green', rotatebet: 'purple', custom_rotatebet: 'magenta', custom_winbet: 'gold', main_trend_bet: 'cyan',
+  rushbet: 'volcano', followbet: 'green', rotatebet: 'purple', custom_rotatebet: 'magenta', custom_winbet: 'gold', main_trend_bet: 'cyan',
 }
 
 export default function FlowPage() {

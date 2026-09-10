@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { Card, Row, Col, Tag, Button, Space, Typography, Statistic, Alert } from 'antd'
-import { PlayCircleOutlined, PauseCircleOutlined, ThunderboltOutlined, FireOutlined, AimOutlined, TeamOutlined, RetweetOutlined } from '@ant-design/icons'
+import { PlayCircleOutlined, PauseCircleOutlined, FireOutlined, TeamOutlined, RetweetOutlined } from '@ant-design/icons'
 import { api } from '../api/client'
 import UpdateNotice from '../components/UpdateNotice'
 
@@ -13,7 +13,7 @@ const STATUS_TAG = {
 }
 
 export default function Dashboard({ licenseInfo }) {
-  const [status, setStatus] = useState({ autobet: 'stopped', rushbet: 'stopped', pickbet: 'stopped', followbet: 'stopped', custom_rotatebet: 'stopped', main_trend_bet: 'stopped' })
+  const [status, setStatus] = useState({ rushbet: 'stopped', followbet: 'stopped', rotatebet: 'stopped', custom_rotatebet: 'stopped', custom_winbet: 'stopped', main_trend_bet: 'stopped' })
   const [loading, setLoading] = useState({})
 
   const refresh = async () => {
@@ -31,12 +31,8 @@ export default function Dashboard({ licenseInfo }) {
     setLoading((p) => ({ ...p, [key]: true }))
     try {
       const fn = {
-        'autobet-start': api.startAutoBet,
-        'autobet-stop': api.stopAutoBet,
         'rushbet-start': api.startRushBet,
         'rushbet-stop': api.stopRushBet,
-        'pickbet-start': api.startPickBet,
-        'pickbet-stop': api.stopPickBet,
         'followbet-start': api.startFollowBet,
         'followbet-stop': api.stopFollowBet,
         'custom-rotatebet-start': api.startCustomRotateBet,
@@ -72,43 +68,7 @@ export default function Dashboard({ licenseInfo }) {
       )}
 
       <Row gutter={24}>
-        {/* 自动下注模块 */}
-        <Col xs={24} md={12}>
-          <Card
-            title={<Space><ThunderboltOutlined style={{ color: '#1677ff' }} /><span>自动下注（三球9粒）</span></Space>}
-            extra={STATUS_TAG[status.autobet] || STATUS_TAG.stopped}
-            style={{ borderRadius: 12, marginBottom: 24 }}
-          >
-            <Space direction="vertical" style={{ width: '100%' }} size={16}>
-              <Text type="secondary">随机选号，全自动登录下注，支持多账号并发，内置止盈止损</Text>
-              <Row gutter={16}>
-                <Col span={12}>
-                  <Statistic title="状态" value={status.autobet === 'running' ? '运行中' : '已停止'} />
-                </Col>
-              </Row>
-              <Space>
-                <Button
-                  type="primary"
-                  icon={<PlayCircleOutlined />}
-                  disabled={status.autobet === 'running'}
-                  loading={loading['autobet']}
-                  onClick={() => ctrl('autobet-start', 'autobet')}
-                >
-                  启动
-                </Button>
-                <Button
-                  danger
-                  icon={<PauseCircleOutlined />}
-                  disabled={status.autobet === 'stopped'}
-                  loading={loading['autobet-stop']}
-                  onClick={() => ctrl('autobet-stop', 'autobet-stop')}
-                >
-                  停止
-                </Button>
-              </Space>
-            </Space>
-          </Card>
-        </Col>
+
 
         {/* 赢冲输缩模块 */}
         <Col xs={24} md={12}>
@@ -149,44 +109,6 @@ export default function Dashboard({ licenseInfo }) {
           </Card>
         </Col>
 
-        {/* 自选号赢冲输缩模块 */}
-        <Col xs={24} md={12}>
-          <Card
-            title={<Space><AimOutlined style={{ color: '#fa541c' }} /><span>自选号赢冲输缩（3路自选号）</span></Space>}
-            extra={STATUS_TAG[status.pickbet] || STATUS_TAG.stopped}
-            style={{ borderRadius: 12, marginBottom: 24 }}
-          >
-            <Space direction="vertical" style={{ width: '100%' }} size={16}>
-              <Text type="secondary">三路各自勾选号码（勾几个用几个），命中升二阶赢冲，未中降回一阶，号码固定每期投</Text>
-              <Row gutter={16}>
-                <Col span={12}>
-                  <Statistic title="状态" value={status.pickbet === 'running' ? '运行中' : '已停止'} />
-                </Col>
-              </Row>
-              <Space>
-                <Button
-                  type="primary"
-                  icon={<PlayCircleOutlined />}
-                  disabled={status.pickbet === 'running'}
-                  loading={loading['pickbet']}
-                  onClick={() => ctrl('pickbet-start', 'pickbet')}
-                  style={{ background: '#fa541c', borderColor: '#fa541c' }}
-                >
-                  启动
-                </Button>
-                <Button
-                  danger
-                  icon={<PauseCircleOutlined />}
-                  disabled={status.pickbet === 'stopped'}
-                  loading={loading['pickbet-stop']}
-                  onClick={() => ctrl('pickbet-stop', 'pickbet-stop')}
-                >
-                  停止
-                </Button>
-              </Space>
-            </Space>
-          </Card>
-        </Col>
 
         {/* 跟投模块 */}
         <Col xs={24} md={12}>

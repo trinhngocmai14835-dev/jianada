@@ -93,7 +93,6 @@ pyinstaller ^
   --hidden-import "services.auto_bet_svc" ^
   --hidden-import "services.follow_bet_svc" ^
   --hidden-import "services.rush_bet_svc" ^
-  --hidden-import "services.pick_bet_svc" ^
   --hidden-import "services.rotate_bet_svc" ^
   --hidden-import "services.custom_rotate_bet_svc" ^
   --hidden-import "services.custom_win_bet_svc" ^

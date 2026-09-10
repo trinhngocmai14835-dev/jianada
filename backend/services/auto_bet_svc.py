@@ -140,6 +140,25 @@ def _page_url(page) -> str:
         return ""
 
 
+
+def _is_on_target_bet_page(page, target_page: str) -> bool:
+    expected = f"page={target_page}"
+    candidates = [page]
+    try:
+        frame = page.frame(name="frame")
+        if frame is not None:
+            candidates.insert(0, frame)
+    except Exception:
+        pass
+    for candidate in candidates:
+        try:
+            if expected in (getattr(candidate, "url", "") or ""):
+                return True
+        except Exception:
+            continue
+    return False
+
+
 def _is_logged_in_url(url: str) -> bool:
     return "/Home/Index" in (url or "") or "/Member/Agreement" in (url or "")
 
@@ -352,11 +371,14 @@ def _login(
     log(f"[{account}] 登录阶段 7/8：公告弹窗处理完成，已关闭{closed}个")
 
     log(f"[{account}] 登录阶段 8/8：进入{target_desc}下注页")
-    try:
-        login_page.locator(f'a[href*="page={target_page}"], a[url*="page={target_page}"]').first.click(timeout=8000)
-        time.sleep(3)
-    except Exception as e:
-        log(f"[{account}] 登录阶段 8/8：未能自动进入{target_desc}页，继续使用当前页：{e}")
+    if _is_on_target_bet_page(login_page, target_page):
+        log(f"[{account}] 登录阶段 8/8：已在{target_desc}页，跳过盘口切换")
+    else:
+        try:
+            login_page.locator(f'a[href*="page={target_page}"], a[url*="page={target_page}"]').first.click(timeout=8000)
+            time.sleep(3)
+        except Exception as e:
+            log(f"[{account}] 登录阶段 8/8：未能自动进入{target_desc}页，继续使用当前页：{e}")
     log(f"[{account}] 登录完成，当前页: {_page_url(login_page)[:60]}")
     return login_page
 # ─── 下注逻辑 ────────────────────────────────────────────────
