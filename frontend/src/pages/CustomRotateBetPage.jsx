@@ -157,6 +157,14 @@ function suggestionType(level) {
   return 'info'
 }
 
+function recordSourceText(source) {
+  if (!source) return ''
+  const parts = [source.label || '开奖记录']
+  if (source.captured_at) parts.push(`抓取 ${source.captured_at}`)
+  if (source.record_count) parts.push(`${source.record_count}条`)
+  if (source.first_issue || source.last_issue) parts.push(`期号 ${source.first_issue || '-'} - ${source.last_issue || '-'}`)
+  return parts.join('；')
+}
 function setMetric(row, label) {
   const nums = label === 'A' ? row.set_a : row.set_b
   const metric = row.sets?.[label] || {}
@@ -650,6 +658,9 @@ export default function CustomRotateBetPage() {
                       <Statistic title="风险" value={summary?.risk_level || '-'} valueStyle={{ color: riskColor(summary?.risk_level) }} />
                     </Col>
                   </Row>
+                  {analysis.record_source && (
+                    <Alert type="info" showIcon message={`回测样本：${recordSourceText(analysis.record_source)}`} style={{ marginBottom: 12 }} />
+                  )}
                   <Space direction="vertical" style={{ width: '100%', marginBottom: 12 }}>
                     {(analysis.suggestions || []).slice(0, 4).map((item, index) => (
                       <Alert key={`${item.level}-${index}`} type={suggestionType(item.level)} showIcon message={item.text} />

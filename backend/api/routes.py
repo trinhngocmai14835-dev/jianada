@@ -4,7 +4,8 @@ from typing import Any
 
 from core.db import (get_config, set_config, get_license, save_license,
                      get_flow, flow_accounts, clear_flow,
-                     add_draw_records, get_draw_records, clear_draw_records)
+                     add_draw_records, get_draw_records, clear_draw_records,
+                     save_draw_record_snapshot, get_latest_draw_record_snapshot)
 from core.license import get_machine_id, validate_license
 from core.task_manager import TaskManager
 from services.auto_bet_svc import run as auto_bet_run
@@ -563,6 +564,48 @@ def stop_custom_rotatebet_account_route(req: StopCustomRotateBetAccountRequest):
 
 
 
+def _snapshot_meta(snapshot: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not snapshot:
+        return None
+    return {
+        "type": "draw_snapshot",
+        "label": "最近一次抓取快照",
+        "snapshot_id": snapshot.get("id"),
+        "captured_at": snapshot.get("captured_at") or "",
+        "source": snapshot.get("source") or "",
+        "record_count": snapshot.get("record_count") or len(snapshot.get("records") or []),
+        "first_issue": snapshot.get("first_issue") or "",
+        "last_issue": snapshot.get("last_issue") or "",
+    }
+
+
+def _record_source_from_records(records: list[dict[str, Any]], source_type: str, label: str) -> dict[str, Any]:
+    first_issue = records[-1].get("issue") if records else ""
+    last_issue = records[0].get("issue") if records else ""
+    return {
+        "type": source_type,
+        "label": label,
+        "record_count": len(records),
+        "first_issue": first_issue,
+        "last_issue": last_issue,
+    }
+
+
+def _load_backtest_records(data: dict[str, Any]) -> dict[str, Any]:
+    if data.get("records") or data.get("text"):
+        return {"type": "provided", "label": "当前传入开奖记录"}
+
+    limit = data.get("limit") or 1000
+    snapshot = get_latest_draw_record_snapshot(limit)
+    if snapshot and snapshot.get("records"):
+        data["records"] = snapshot["records"]
+        return _snapshot_meta(snapshot) or {"type": "draw_snapshot", "label": "最近一次抓取快照"}
+
+    records = get_draw_records(limit)
+    data["records"] = records
+    return _record_source_from_records(records, "saved_records", "本地累计开奖记录")
+
+
 class CustomRotateAnalysisRequest(BaseModel):
     config: dict[str, Any] = {}
     records: list[dict[str, Any]] = []
@@ -574,10 +617,13 @@ class CustomRotateAnalysisRequest(BaseModel):
 def api_custom_rotatebet_analyze(req: CustomRotateAnalysisRequest):
     data = req.model_dump() if hasattr(req, "model_dump") else req.dict()
     cfg = {**DEFAULT_CUSTOM_ROTATEBET, **get_config("custom_rotatebet_config", {}), **(data.get("config") or {})}
-    if not data.get("records") and not data.get("text"):
-        data["records"] = get_draw_records(data.get("limit") or 1000)
+    record_source = _load_backtest_records(data)
     data["config"] = cfg
-    return analyze_custom_rotatebet_payload(data)
+    result = analyze_custom_rotatebet_payload(data)
+    result["record_source"] = record_source
+    return result
+
+
 @router.post("/custom-winbet/start")
 def start_custom_winbet():
     ok, msg = _check_license()
@@ -610,6 +656,7 @@ class CustomWinAnalysisRequest(BaseModel):
     text: str = ""
     limit: int = 1000
 
+
 class StopCustomWinBetAccountRequest(BaseModel):
     key: str
 
@@ -620,10 +667,13 @@ class StopCustomWinBetAccountRequest(BaseModel):
 def api_custom_winbet_analyze(req: CustomWinAnalysisRequest):
     data = req.model_dump() if hasattr(req, "model_dump") else req.dict()
     cfg = {**DEFAULT_CUSTOM_WINBET, **get_config("custom_winbet_config", {}), **(data.get("config") or {})}
-    if not data.get("records") and not data.get("text"):
-        data["records"] = get_draw_records(data.get("limit") or 1000)
+    record_source = _load_backtest_records(data)
     data["config"] = cfg
-    return analyze_custom_winbet_payload(data)
+    result = analyze_custom_winbet_payload(data)
+    result["record_source"] = record_source
+    return result
+
+
 @router.post("/custom-winbet/accounts/stop")
 def stop_custom_winbet_account_route(req: StopCustomWinBetAccountRequest):
     ok, msg = stop_custom_winbet_account(req.key)
@@ -731,6 +781,7 @@ def api_draw_analysis_capture(req: DrawCaptureRequest):
     if not captured.get("ok"):
         return captured
     records = captured.get("records") or []
+    snapshot = save_draw_record_snapshot(records, "browser") if data.get("save", True) else None
     saved = add_draw_records(records, "browser") if data.get("save", True) else 0
     analysis = analyze_draws(
         records=records,
@@ -738,13 +789,14 @@ def api_draw_analysis_capture(req: DrawCaptureRequest):
         backtest_window=data.get("backtest_window") or data.get("backtestWindow") or 300,
         group_size=data.get("group_size") or data.get("groupSize") or 5,
     )
-    return {**captured, "saved": saved, "analysis": analysis}
+    return {**captured, "saved": saved, "snapshot": _snapshot_meta(snapshot), "analysis": analysis}
 
 
 @router.get("/draw-analysis/records")
 def api_draw_analysis_records(limit: int = 1000):
     records = get_draw_records(limit)
-    return {"records": records, "text": _draw_records_text(records)}
+    snapshot = get_latest_draw_record_snapshot(limit)
+    return {"records": records, "text": _draw_records_text(records), "latest_snapshot": _snapshot_meta(snapshot)}
 
 
 @router.post("/draw-analysis/records/clear")

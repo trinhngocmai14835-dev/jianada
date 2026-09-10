@@ -160,6 +160,14 @@ function suggestionType(level) {
   return 'info'
 }
 
+function recordSourceText(source) {
+  if (!source) return ''
+  const parts = [source.label || '开奖记录']
+  if (source.captured_at) parts.push(`抓取 ${source.captured_at}`)
+  if (source.record_count) parts.push(`${source.record_count}条`)
+  if (source.first_issue || source.last_issue) parts.push(`期号 ${source.first_issue || '-'} - ${source.last_issue || '-'}`)
+  return parts.join('；')
+}
 function setMetric(row, label) {
   const nums = label === 'A' ? row.set_a : row.set_b
   const metric = row.sets?.[label] || {}
@@ -658,6 +666,9 @@ export default function CustomWinBetPage() {
                     <Statistic title="开奖记录" value={summary?.records || 0} />
                   </Col>
                 </Row>
+                {analysis.record_source && (
+                  <Alert type="info" showIcon message={`回测样本：${recordSourceText(analysis.record_source)}`} />
+                )}
                 {(analysis.suggestions || []).map((item, index) => (
                   <Alert key={`${item.level}-${index}`} type={suggestionType(item.level)} showIcon message={item.text} />
                 ))}

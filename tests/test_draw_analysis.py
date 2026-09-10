@@ -126,7 +126,25 @@ def test_draw_record_db_persists_and_overwrites(tmp_path):
         assert updated["ds"] == "单"
         assert updated["source"] == "browser"
 
+        snapshot = core_db.save_draw_record_snapshot([
+            {"issue": "2001", "draw_time": "09-09 11:00", "numbers": [1, 1, 1]},
+            {"issue": "2002", "draw_time": "09-09 11:03", "numbers": [2, 2, 2]},
+        ], source="browser")
+        assert snapshot["record_count"] == 2
+        assert snapshot["first_issue"] == "2001"
+        assert snapshot["last_issue"] == "2002"
+
+        saved = core_db.add_draw_records([
+            {"issue": "2003", "draw_time": "09-09 11:06", "numbers": [3, 3, 3]},
+        ], source="browser")
+        assert saved == 1
+
+        latest_snapshot = core_db.get_latest_draw_record_snapshot(10)
+        assert latest_snapshot["record_count"] == 2
+        assert [r["issue"] for r in latest_snapshot["records"]] == ["2001", "2002"]
+
         core_db.clear_draw_records()
         assert core_db.get_draw_records(10) == []
+        assert core_db.get_latest_draw_record_snapshot(10) is None
     finally:
         core_db.DB_PATH = old_path

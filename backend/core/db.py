@@ -64,6 +64,18 @@ def init_db():
             )
         """)
         c.execute("CREATE INDEX IF NOT EXISTS idx_draw_records_issue ON draw_records(issue)")
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS draw_record_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                captured_at TEXT,
+                source TEXT,
+                record_count INTEGER,
+                first_issue TEXT,
+                last_issue TEXT,
+                records_json TEXT
+            )
+        """)
+        c.execute("CREATE INDEX IF NOT EXISTS idx_draw_record_snapshots_id ON draw_record_snapshots(id)")
 
 
 def get_config(key: str, default=None):
@@ -207,6 +219,98 @@ def add_draw_records(records, source: str = "browser") -> int:
     return saved
 
 
+def _normalize_snapshot_records(records, source: str, captured_at: str):
+    normalized = []
+    for record in records or []:
+        if not isinstance(record, dict):
+            continue
+        issue = str(record.get("issue") or record.get("period") or "").strip()
+        nums = _coerce_draw_numbers(record)
+        if not issue or nums is None:
+            continue
+        total = nums[0] + nums[1] + nums[2]
+        dx, ds, special = _draw_label(total)
+        normalized.append({
+            "issue": issue,
+            "draw_time": str(record.get("draw_time") or record.get("drawTime") or ""),
+            "numbers": nums,
+            "total": total,
+            "dx": dx,
+            "ds": ds,
+            "special": bool(special),
+            "source": source or "",
+            "captured_at": captured_at,
+        })
+    return normalized
+
+
+def save_draw_record_snapshot(records, source: str = "browser"):
+    captured_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    normalized = _normalize_snapshot_records(records, source, captured_at)
+    if not normalized:
+        return None
+    ordered = sorted(normalized, key=lambda item: (0, int(item["issue"])) if str(item.get("issue", "")).isdigit() else (1, str(item.get("issue", ""))))
+    with _conn() as c:
+        cur = c.execute(
+            """
+            INSERT INTO draw_record_snapshots
+            (captured_at, source, record_count, first_issue, last_issue, records_json)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                captured_at,
+                source or "",
+                len(ordered),
+                ordered[0]["issue"],
+                ordered[-1]["issue"],
+                json.dumps(ordered, ensure_ascii=False),
+            ),
+        )
+        snapshot_id = cur.lastrowid
+    return {
+        "id": snapshot_id,
+        "captured_at": captured_at,
+        "source": source or "",
+        "record_count": len(ordered),
+        "first_issue": ordered[0]["issue"],
+        "last_issue": ordered[-1]["issue"],
+        "records": ordered,
+    }
+
+
+def get_latest_draw_record_snapshot(limit: int = 1000):
+    limit = min(5000, max(1, int(limit or 1000)))
+    with _conn() as c:
+        row = c.execute(
+            """
+            SELECT id, captured_at, source, record_count, first_issue, last_issue, records_json
+            FROM draw_record_snapshots
+            ORDER BY id DESC
+            LIMIT 1
+            """
+        ).fetchone()
+    if not row:
+        return None
+    try:
+        records = json.loads(row[6] or "[]")
+    except Exception:
+        records = []
+    if limit and len(records) > limit:
+        records = records[-limit:]
+    first_issue = records[0].get("issue") if records else (row[4] or "")
+    last_issue = records[-1].get("issue") if records else (row[5] or "")
+    return {
+        "id": row[0],
+        "captured_at": row[1] or "",
+        "source": row[2] or "",
+        "record_count": len(records),
+        "snapshot_record_count": row[3] or len(records),
+        "first_issue": first_issue,
+        "last_issue": last_issue,
+        "records": records,
+    }
+
+
 def get_draw_records(limit: int = 1000):
     limit = min(5000, max(1, int(limit or 1000)))
     with _conn() as c:
@@ -238,3 +342,4 @@ def get_draw_records(limit: int = 1000):
 def clear_draw_records() -> None:
     with _conn() as c:
         c.execute("DELETE FROM draw_records")
+        c.execute("DELETE FROM draw_record_snapshots")

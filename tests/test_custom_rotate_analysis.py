@@ -108,3 +108,25 @@ def test_custom_rotate_analysis_api_uses_saved_draw_records(tmp_path):
         assert len(data["recommendations"]["same5_positions"]) == 3
     finally:
         core_db.DB_PATH = old_path
+
+def test_custom_rotate_analysis_api_prefers_latest_draw_snapshot(tmp_path):
+    old_path = core_db.DB_PATH
+    core_db.DB_PATH = str(tmp_path / "draws.db")
+    try:
+        core_db.init_db()
+        snapshot = core_db.save_draw_record_snapshot(sample_draw_records(40), "browser")
+        core_db.add_draw_records(sample_draw_records(90), "browser")
+        with TestClient(app) as client:
+            res = client.post("/api/custom-rotatebet/analyze", json={"config": CONFIG, "limit": 90})
+        data = res.json()
+
+        assert res.status_code == 200
+        assert data["ok"] is True
+        assert snapshot["record_count"] == 40
+        assert data["summary"]["records"] == 40
+        assert data["record_source"]["type"] == "draw_snapshot"
+        assert data["record_source"]["snapshot_id"] == snapshot["id"]
+        assert data["record_source"]["first_issue"] == snapshot["first_issue"]
+        assert data["record_source"]["last_issue"] == snapshot["last_issue"]
+    finally:
+        core_db.DB_PATH = old_path
