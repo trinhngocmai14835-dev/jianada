@@ -37,7 +37,7 @@ def _get_chrome() -> str | None:
     return None
 
 
-def _launch_source_browser(port: str, entry_url: str, log) -> bool:
+def _launch_source_browser(port: str, entry_url: str, log, usage_hint: str = "请登录后前往 报表中心 → 注单明细") -> bool:
     chrome = _get_chrome()
     if not chrome:
         log(f"❌ 未找到Chrome可执行文件，请手动启动Chrome并添加参数: --remote-debugging-port={port}")
@@ -66,7 +66,7 @@ def _launch_source_browser(port: str, entry_url: str, log) -> bool:
     ]
     try:
         proc = subprocess.Popen(args, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
-        log(f"🌐 Chrome已启动(PID={proc.pid}, 端口{port}, 独立配置文件)，请登录后前往 报表中心 → 注单明细")
+        log(f"🌐 Chrome已启动(PID={proc.pid}, 端口{port}, 独立配置文件)，{usage_hint}")
         return True
     except Exception as e:
         log(f"❌ 启动Chrome失败: {e}")

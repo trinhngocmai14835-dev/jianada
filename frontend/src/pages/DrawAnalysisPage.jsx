@@ -79,6 +79,7 @@ export default function DrawAnalysisPage() {
   const [captureLimit, setCaptureLimit] = useState(500)
   const [loading, setLoading] = useState(false)
   const [captureLoading, setCaptureLoading] = useState(false)
+  const [openBrowserLoading, setOpenBrowserLoading] = useState(false)
   const [result, setResult] = useState(null)
 
   const runAnalyze = async (nextText = text) => {
@@ -98,6 +99,21 @@ export default function DrawAnalysisPage() {
     }
   }
 
+
+  const openCaptureBrowser = async () => {
+    setOpenBrowserLoading(true)
+    try {
+      const data = await api.openDrawAnalysisBrowser(capturePort)
+      if (data?.ok === false) {
+        message.error(data.message || '打开浏览器失败')
+      } else {
+        message.success(data.message || `已打开 ${capturePort} 端口浏览器`)
+      }
+      return data
+    } finally {
+      setOpenBrowserLoading(false)
+    }
+  }
   const captureRealRecords = async () => {
     setCaptureLoading(true)
     try {
@@ -227,7 +243,8 @@ export default function DrawAnalysisPage() {
               </Space>
             </Space>
             <Space wrap>
-              <Button type="primary" icon={<ChromeOutlined />} onClick={captureRealRecords} loading={captureLoading}>抓取并分析</Button>
+              <Button icon={<ChromeOutlined />} onClick={openCaptureBrowser} loading={openBrowserLoading}>打开浏览器</Button>
+              <Button type="primary" icon={<SearchOutlined />} onClick={captureRealRecords} loading={captureLoading}>抓取并分析</Button>
               <Button icon={<DatabaseOutlined />} onClick={loadSavedRecords} loading={loading}>读取保存</Button>
               <Popconfirm title="清空本地保存的开奖记录？" okText="清空" cancelText="取消" onConfirm={clearSavedRecords}>
                 <Button danger icon={<DeleteOutlined />} loading={loading}>清空</Button>

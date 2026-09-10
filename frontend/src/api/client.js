@@ -51,6 +51,7 @@ export const api = {
   getStatus: () => req('GET', '/status'),
   analyzeDraws: (data) => req('POST', '/draw-analysis/analyze', data),
   captureDrawRecords: (data) => req('POST', '/draw-analysis/capture', data),
+  openDrawAnalysisBrowser: (port, entry_url = '') => req('POST', '/draw-analysis/open-browser', { port: String(port), entry_url }),
   getSavedDrawRecords: (limit = 1000) => req('GET', '/draw-analysis/records?limit=' + encodeURIComponent(limit)),
   clearSavedDrawRecords: () => req('POST', '/draw-analysis/records/clear'),
   getDrawAnalysisSample: (limit = 160) => req('GET', '/draw-analysis/sample?limit=' + encodeURIComponent(limit)),

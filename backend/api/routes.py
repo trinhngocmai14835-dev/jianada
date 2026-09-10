@@ -701,6 +701,18 @@ def api_draw_analysis_sample(limit: int = 160):
     return {"records": sample_draw_records(limit), "text": sample_draw_text(limit)}
 
 
+
+@router.post("/draw-analysis/open-browser")
+def open_draw_analysis_browser(req: OpenBrowserRequest):
+    logs = []
+    ok = _launch_source_browser(
+        req.port,
+        req.entry_url,
+        lambda msg: logs.append(msg),
+        usage_hint="请登录后打开 开奖结果 页面，再回软件抓取并分析",
+    )
+    return {"ok": ok, "message": logs[-1] if logs else ""}
+
 @router.post("/draw-analysis/capture")
 def api_draw_analysis_capture(req: DrawCaptureRequest):
     data = req.model_dump() if hasattr(req, "model_dump") else req.dict()
