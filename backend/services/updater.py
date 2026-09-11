@@ -242,8 +242,10 @@ function Write-UpdateLog($msg) {{
   Add-Content -LiteralPath $log -Value ("$(Get-Date -Format s) " + $msg) -Encoding UTF8
 }}
 function Clear-PyInstallerEnv {{
-  foreach ($name in @("_MEIPASS2", "_PYI_APPLICATION_HOME_DIR", "_PYI_ARCHIVE_FILE", "_PYI_PARENT_PROCESS_LEVEL", "_PYI_SPLASH_IPC")) {{
-    Remove-Item -LiteralPath ("Env:" + $name) -ErrorAction SilentlyContinue
+  foreach ($item in Get-ChildItem Env: -ErrorAction SilentlyContinue) {{
+    if ($item.Name -eq "_MEIPASS2" -or $item.Name -like "_PYI*" -or $item.Name -like "PYINSTALLER_*") {{
+      Remove-Item -LiteralPath ("Env:" + $item.Name) -ErrorAction SilentlyContinue
+    }}
   }}
   $env:PYINSTALLER_RESET_ENVIRONMENT = "1"
 }}
@@ -272,6 +274,19 @@ function Show-UpdateError($msg) {{
     Add-Type -AssemblyName PresentationFramework
     [System.Windows.MessageBox]::Show($msg, "自动更新失败") | Out-Null
   }} catch {{}}
+}}
+function Close-AppBrowserWindows {{
+  foreach ($name in @("chrome", "msedge")) {{
+    foreach ($p in Get-Process -Name $name -ErrorAction SilentlyContinue) {{
+      try {{
+        $title = [string]$p.MainWindowTitle
+        if ($title -match "localhost:8080|127\\.0\\.0\\.1:8080|自动下单系统") {{
+          Write-UpdateLog ("closing browser window " + $p.Id + " " + $title)
+          $null = $p.CloseMainWindow()
+        }}
+      }} catch {{}}
+    }}
+  }}
 }}
 function Restore-BackupIfNeeded {{
   if (!(Test-Path -LiteralPath $dst) -and (Test-Path -LiteralPath $backup)) {{
@@ -384,10 +399,13 @@ def _spawn_exit_watchdog(pid: int, delay_seconds: float = 8) -> bool:
     if os.name != "nt":
         return False
     delay = max(2, int(round(delay_seconds)))
-    command = f"timeout /t {delay} /nobreak >nul 2>nul & taskkill /PID {int(pid)} /F >nul 2>nul"
+    script = (
+        f"Start-Sleep -Seconds {delay}; "
+        f"try {{ Stop-Process -Id {int(pid)} -Force -ErrorAction SilentlyContinue }} catch {{}}"
+    )
     with clean_subprocess_context():
         subprocess.Popen(
-            ["cmd.exe", "/d", "/c", command],
+            ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-Command", script],
             env=sanitized_subprocess_env(),
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
@@ -396,7 +414,6 @@ def _spawn_exit_watchdog(pid: int, delay_seconds: float = 8) -> bool:
             creationflags=_detached_creationflags(),
         )
     return True
-
 
 def _exit_current_process_later() -> None:
     time.sleep(_TASK_EXIT_DELAY)

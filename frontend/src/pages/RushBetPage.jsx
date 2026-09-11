@@ -16,19 +16,6 @@ const STATUS_TAG = {
   stopped: <Tag color="default">已停止</Tag>,
 }
 
-// 条件赢冲输缩默认档位参数：老客户配置缺这些字段时用它补齐，保证表单有初值
-const COND_DEFAULTS = {
-  conditional_tiers: [
-    { base: 50, rush: 70 },
-    { base: 70, rush: 98 },
-    { base: 100, rush: 140 },
-  ],
-  loss_thresholds: [2000, 3000],
-  sleep_periods: 3,
-}
-
-// 与后端 _next_alarm 同一套规则：今天的 HH:MM，已过则顺延次日。
-// 格式非法返回 null。
 const nextAlarm = (hhmm) => {
   const m = /^\s*(\d{1,2})\s*:\s*(\d{1,2})\s*$/.exec(hhmm || '')
   if (!m) return null
@@ -43,7 +30,6 @@ const nextAlarm = (hhmm) => {
 
 export default function RushBetPage() {
   const [form] = Form.useForm()
-  const mode = Form.useWatch('strategy_mode', form) || 'conditional'
   const startMode = Form.useWatch('start_mode', form) || 'now'
   const [status, setStatus] = useState('stopped')
   const [loading, setLoading] = useState(false)
@@ -62,7 +48,7 @@ export default function RushBetPage() {
   }
 
   useEffect(() => {
-    api.getRushBetConfig().then((cfg) => form.setFieldsValue({ ...COND_DEFAULTS, ...cfg }))
+    api.getRushBetConfig().then((cfg) => form.setFieldsValue({ ...cfg, strategy_mode: 'simple' }))
     refresh()
     const t = setInterval(refresh, 3000)
     return () => clearInterval(t)
@@ -73,7 +59,7 @@ export default function RushBetPage() {
       const saveOverrides = overrides && (overrides.nativeEvent || overrides.currentTarget || overrides.target) ? {} : (overrides || {})
       const vals = await form.validateFields()
       setSaving(true)
-      const res = await api.saveRushBetConfig({ ...vals, ...saveOverrides })
+      const res = await api.saveRushBetConfig({ ...vals, ...saveOverrides, strategy_mode: 'simple' })
       if (res?.ok === false) {
         message.error(res.message || '保存失败')
         return false
@@ -245,92 +231,34 @@ export default function RushBetPage() {
                   </Form.List>
                 </Panel>
 
-                <Panel header="🔥 注码策略" key="strategy">
-                  <Form.Item label="策略模式" name="strategy_mode" initialValue="conditional">
-                    <Radio.Group optionType="button" buttonStyle="solid">
-                      <Radio.Button value="conditional">条件赢冲输缩（档位）</Radio.Button>
-                      <Radio.Button value="simple">固定赢冲输缩（原版）</Radio.Button>
-                    </Radio.Group>
+                <Panel header="注码策略" key="strategy">
+                  <Form.Item name="strategy_mode" initialValue="simple" hidden>
+                    <Input />
                   </Form.Item>
-
-                  {mode === 'conditional' ? (
-                    <div style={{
-                      background: '#fff7e6', border: '1px solid #ffd591', borderRadius: 8,
-                      padding: '12px 14px', marginBottom: 16,
-                    }}>
-                      <Text strong style={{ color: '#d46b08' }}>条件赢冲输缩 — 档位注码（可手动修改）</Text>
-                      <Row gutter={8} style={{ marginTop: 10, marginBottom: 4, fontSize: 12, color: '#8c6d1f' }}>
-                        <Col span={3} />
-                        <Col span={6}>一阶底注(元)</Col>
-                        <Col span={6}>二阶赢冲(元)</Col>
-                        <Col span={9}>累计亏损升档(元)</Col>
-                      </Row>
-                      {[0, 1, 2].map((i) => (
-                        <Row gutter={8} key={i} align="middle" style={{ marginBottom: 8 }}>
-                          <Col span={3}><Text strong>档{i + 1}</Text></Col>
-                          <Col span={6}>
-                            <Form.Item name={['conditional_tiers', i, 'base']} rules={[{ required: true, message: '必填' }]} style={{ marginBottom: 0 }}>
-                              <InputNumber style={{ width: '100%' }} min={1} />
-                            </Form.Item>
-                          </Col>
-                          <Col span={6}>
-                            <Form.Item name={['conditional_tiers', i, 'rush']} rules={[{ required: true, message: '必填' }]} style={{ marginBottom: 0 }}>
-                              <InputNumber style={{ width: '100%' }} min={1} />
-                            </Form.Item>
-                          </Col>
-                          <Col span={9}>
-                            {i < 2 ? (
-                              <Form.Item name={['loss_thresholds', i]} rules={[{ required: true, message: '必填' }]} style={{ marginBottom: 0 }}>
-                                <InputNumber style={{ width: '100%' }} min={1} placeholder={`>此值升档${i + 2}`} />
-                              </Form.Item>
-                            ) : (
-                              <Text type="secondary" style={{ fontSize: 12 }}>封顶档（不再升）</Text>
-                            )}
-                          </Col>
-                        </Row>
-                      ))}
-                      <Row gutter={8} align="middle" style={{ marginTop: 8 }}>
-                        <Col span={9}>
-                          <Form.Item label="升档前休眠 (期)" name="sleep_periods" style={{ marginBottom: 0 }}
-                            tooltip="升档后先跳过这么多期不下注，再用新档位开打">
-                            <InputNumber style={{ width: '100%' }} min={0} />
-                          </Form.Item>
-                        </Col>
-                        <Col span={15}>
-                          <div style={{ color: '#614700', fontSize: 12, paddingTop: 28, lineHeight: 1.5 }}>
-                            回正(累计利润≥0)立即归档1；档内每球独立赢冲输缩（中→二阶 / 不中→一阶）
-                          </div>
-                        </Col>
-                      </Row>
-                    </div>
-                  ) : (
-                    <>
-                      <Row gutter={16}>
-                        <Col span={12}>
-                          <Form.Item label="一阶底注 (元)" name="base_bet_amount" tooltip="首次或输后的注码">
-                            <InputNumber style={{ width: '100%' }} min={1} />
-                          </Form.Item>
-                        </Col>
-                        <Col span={12}>
-                          <Form.Item label="二阶赢冲 (元)" name="rush_bet_amount" tooltip="命中一次后升阶使用的注码">
-                            <InputNumber style={{ width: '100%' }} min={1} />
-                          </Form.Item>
-                        </Col>
-                      </Row>
-                      <Form.Item
-                        label="虚拟亏损触发实投（元）"
-                        name="virtual_loss_trigger"
-                        initialValue={0}
-                        tooltip="0=立即真实投注；填8000=先按固定赢冲输缩模拟选号和结算，虚拟累计亏损达到8000后，从下一期继承当前一阶/二阶状态开始实投"
-                      >
-                        <InputNumber style={{ width: '100%' }} min={0} placeholder="0 表示立即实投" />
+                  <Row gutter={16}>
+                    <Col span={12}>
+                      <Form.Item label="一阶底注 (元)" name="base_bet_amount" tooltip="首次或输后的注码">
+                        <InputNumber style={{ width: '100%' }} min={1} />
                       </Form.Item>
-                      <div style={{ color: '#614700', fontSize: 12, lineHeight: 1.6, background: '#fffbe6',
-                        border: '1px solid #ffe58f', borderRadius: 6, padding: '6px 10px', marginBottom: 12 }}>
-                        填 0：启动后立即真实投注。填大于 0：先只模拟投注，不真实下单；虚拟累计亏损达到该金额后，下一期开始真实投注，并继承模拟时的一阶/二阶状态。
-                      </div>
-                    </>
-                  )}
+                    </Col>
+                    <Col span={12}>
+                      <Form.Item label="二阶赢冲 (元)" name="rush_bet_amount" tooltip="命中一次后升阶使用的注码">
+                        <InputNumber style={{ width: '100%' }} min={1} />
+                      </Form.Item>
+                    </Col>
+                  </Row>
+                  <Form.Item
+                    label="虚拟亏损触发实投（元）"
+                    name="virtual_loss_trigger"
+                    initialValue={0}
+                    tooltip="0=立即真实投注；填8000=先按固定赢冲输缩模拟选号和结算，虚拟累计亏损达到该金额后实投"
+                  >
+                    <InputNumber style={{ width: '100%' }} min={0} placeholder="0 表示立即实投" />
+                  </Form.Item>
+                  <div style={{ color: '#614700', fontSize: 12, lineHeight: 1.6, background: '#fffbe6',
+                    border: '1px solid #ffe58f', borderRadius: 6, padding: '6px 10px', marginBottom: 12 }}>
+                    填 0：启动后立即真实投注。填大于 0：先只模拟投注，不真实下单；虚拟累计亏损达到该金额后，下一期开始真实投注，并继承模拟时的一阶/二阶状态。
+                  </div>
                   <Row gutter={16}>
                     <Col span={12}>
                       <Form.Item label="止盈 (元)" name="take_profit">

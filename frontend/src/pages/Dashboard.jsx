@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { Card, Row, Col, Tag, Button, Space, Typography, Statistic, Alert } from 'antd'
-import { PlayCircleOutlined, PauseCircleOutlined, FireOutlined, TeamOutlined, RetweetOutlined } from '@ant-design/icons'
+import { PlayCircleOutlined, PauseCircleOutlined, FireOutlined, TeamOutlined, RetweetOutlined, BarChartOutlined } from '@ant-design/icons'
 import { api } from '../api/client'
 import UpdateNotice from '../components/UpdateNotice'
 
@@ -13,7 +13,7 @@ const STATUS_TAG = {
 }
 
 export default function Dashboard({ licenseInfo }) {
-  const [status, setStatus] = useState({ rushbet: 'stopped', followbet: 'stopped', rotatebet: 'stopped', custom_rotatebet: 'stopped', custom_winbet: 'stopped', main_trend_bet: 'stopped' })
+  const [status, setStatus] = useState({ rushbet: 'stopped', followbet: 'stopped', rotatebet: 'stopped', custom_rotatebet: 'stopped', custom_winbet: 'stopped', four_code_winbet: 'stopped', main_trend_bet: 'stopped' })
   const [loading, setLoading] = useState({})
 
   const refresh = async () => {
@@ -39,6 +39,8 @@ export default function Dashboard({ licenseInfo }) {
         'custom-rotatebet-stop': api.stopCustomRotateBet,
         'main-trend-bet-start': api.startMainTrendBet,
         'main-trend-bet-stop': api.stopMainTrendBet,
+        'four-code-winbet-start': api.startFourCodeWinBet,
+        'four-code-winbet-stop': api.stopFourCodeWinBet,
       }[action]
       await fn()
       await refresh()
@@ -186,6 +188,44 @@ export default function Dashboard({ licenseInfo }) {
             </Space>
           </Card>
         </Col>
+        <Col xs={24} md={12}>
+          <Card
+            title={<Space><BarChartOutlined style={{ color: '#7cb305' }} /><span>4粒码赢冲输缩</span></Space>}
+            extra={STATUS_TAG[status.four_code_winbet] || STATUS_TAG.stopped}
+            style={{ borderRadius: 12, marginBottom: 24 }}
+          >
+            <Space direction="vertical" style={{ width: '100%' }} size={16}>
+              <Text type="secondary">每路固定4个号码，按预算回测选码，命中升阶，未中回到第1阶，支持运行中新增账号。</Text>
+              <Row gutter={16}>
+                <Col span={12}>
+                  <Statistic title="状态" value={status.four_code_winbet === 'running' ? '运行中' : '已停止'} />
+                </Col>
+              </Row>
+              <Space>
+                <Button
+                  type="primary"
+                  icon={<PlayCircleOutlined />}
+                  disabled={status.four_code_winbet === 'running'}
+                  loading={loading['four_code_winbet']}
+                  onClick={() => ctrl('four-code-winbet-start', 'four_code_winbet')}
+                  style={{ background: '#7cb305', borderColor: '#7cb305' }}
+                >
+                  启动
+                </Button>
+                <Button
+                  danger
+                  icon={<PauseCircleOutlined />}
+                  disabled={status.four_code_winbet === 'stopped'}
+                  loading={loading['four_code_winbet-stop']}
+                  onClick={() => ctrl('four-code-winbet-stop', 'four_code_winbet-stop')}
+                >
+                  停止
+                </Button>
+              </Space>
+            </Space>
+          </Card>
+        </Col>
+
         <Col xs={24} md={12}>
           <Card
             title={<Space><RetweetOutlined style={{ color: '#13c2c2' }} /><span>主势大小单双追损</span></Space>}

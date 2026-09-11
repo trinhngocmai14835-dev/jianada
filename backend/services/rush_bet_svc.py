@@ -26,67 +26,6 @@ from services.settlement_guard import (
 NUMBERS_PER_POS = 4
 NUM_POSITIONS = 3
 
-# ===== 条件赢冲输缩 档位表（内置默认，可被前端配置覆盖）=====
-# 每档 = (一阶底注, 二阶赢冲)；二阶 ≈ 一阶 × 1.4
-TIERS = [(50, 70), (70, 98), (100, 140)]
-# 升档阈值：会话累计亏损绝对值（从启动余额算起，含之前已输金额，故为绝对累计）
-#   档1 累计亏损 > 2000 → 档2；档2 累计亏损 > 3000 → 档3
-LOSS_THRESHOLDS = [2000, 3000]
-# 升档前休眠期数（这几期不下注，等待后再用新档位开打）
-SLEEP_PERIODS = 3
-
-
-def _parse_tiers(raw):
-    """把前端传来的档位配置规整成 [(base, rush), ...]；非法/空返回 None 以便回退默认。
-    兼容两种形态：[{'base':50,'rush':70}, ...] 或 [[50,70], ...]。"""
-    if not raw:
-        return None
-    out = []
-    try:
-        for t in raw:
-            if isinstance(t, dict):
-                b, r = t.get("base"), t.get("rush")
-            else:
-                b, r = t[0], t[1]
-            b, r = int(b), int(r)
-            if b <= 0 or r <= 0:
-                return None
-            out.append((b, r))
-    except (TypeError, ValueError, KeyError, IndexError):
-        return None
-    return out or None
-
-
-def _parse_thresholds(raw):
-    """规整升档阈值为 [int, ...]；非法/空返回 None 以便回退默认。"""
-    if not raw:
-        return None
-    try:
-        out = [int(x) for x in raw if x is not None and int(x) > 0]
-    except (TypeError, ValueError):
-        return None
-    return out or None
-
-
-def _next_tier(tier, profit, tiers=TIERS, loss_thresholds=LOSS_THRESHOLDS):
-    """根据当前档位与会话累计利润，决定下一步档位动作（纯函数，便于测试）。
-
-    tiers / loss_thresholds 默认用内置常量（保证旧测试 2 参调用不变），
-    运行时由 _betting_loop 传入用户配置的实际档位表。
-
-    返回 (new_tier, action)，action 取值：
-      'reset'   — 已回正(利润>=0)，归位档1
-      'upgrade' — 累计亏损突破当前档阈值，升一档
-      'hold'    — 维持当前档位
-    """
-    if profit >= 0 and tier > 0:
-        return 0, "reset"
-    loss = -profit
-    if tier < len(tiers) - 1 and tier < len(loss_thresholds) and loss > loss_thresholds[tier]:
-        return tier + 1, "upgrade"
-    return tier, "hold"
-
-
 def _parse_hhmm(raw):
     """'08:00' -> (8, 0)；空/非法返回 None。"""
     if not isinstance(raw, str):
@@ -186,18 +125,10 @@ def _betting_loop(page, account, cfg, stop_event, log):
     CLOSE_BUFFER = int(cfg.get("close_buffer", 10))
     DRAW_DELAY = int(cfg.get("draw_delay", 73))
 
-    conditional = cfg.get("strategy_mode", "conditional") == "conditional"
-    virtual_trigger = 0 if conditional else _parse_virtual_loss_trigger(cfg.get("virtual_loss_trigger", 0))
+    virtual_trigger = _parse_virtual_loss_trigger(cfg.get("virtual_loss_trigger", 0))
     virtual_active = virtual_trigger > 0
     virtual_profit = 0.0
     settled_profit = 0.0
-
-    TIER_LIST = _parse_tiers(cfg.get("conditional_tiers")) or TIERS
-    THRESHOLDS = _parse_thresholds(cfg.get("loss_thresholds")) or LOSS_THRESHOLDS
-    try:
-        SLEEPS = max(0, int(cfg.get("sleep_periods", SLEEP_PERIODS)))
-    except (TypeError, ValueError):
-        SLEEPS = SLEEP_PERIODS
 
     _wait_until_start(cfg, account, stop_event, log)
     if stop_event.is_set():
@@ -205,13 +136,8 @@ def _betting_loop(page, account, cfg, stop_event, log):
         return
 
     start_balance = _get_balance(page) or 0
-    tier = 0
-    sleep_remaining = 0
-    if conditional:
-        BASE_BET, RUSH_BET = TIER_LIST[tier]
-    else:
-        BASE_BET = int(cfg.get("base_bet_amount", 500))
-        RUSH_BET = int(cfg.get("rush_bet_amount", 700))
+    BASE_BET = int(cfg.get("base_bet_amount", 500))
+    RUSH_BET = int(cfg.get("rush_bet_amount", 700))
     pos_steps = [1, 1, 1]
     last_targets = [None, None, None]
     last_amounts = [BASE_BET, BASE_BET, BASE_BET]
@@ -227,15 +153,10 @@ def _betting_loop(page, account, cfg, stop_event, log):
     pending_settlement = False
     last_heartbeat = 0.0
 
-    if conditional:
-        tier_desc = " -> ".join(f"档{i + 1}({b}/{r})" for i, (b, r) in enumerate(TIER_LIST))
-        log(f"[{account}] 条件赢冲输缩启动 | {tier_desc} | 升档阈值={THRESHOLDS} 休眠={SLEEPS}期 | 起始余额={start_balance}")
-        log(f"[{account}] 当前档位=档{tier + 1} 一阶={BASE_BET} 二阶={RUSH_BET}")
+    if virtual_active:
+        log(f"[{account}] 固定赢冲输缩启动 | 一阶={BASE_BET} 二阶={RUSH_BET} | 先模拟投注，虚拟累计亏损达到{virtual_trigger}元后开始实投 | 起始余额={start_balance}")
     else:
-        if virtual_active:
-            log(f"[{account}] 固定赢冲输缩启动 | 一阶={BASE_BET} 二阶={RUSH_BET} | 先模拟投注，虚拟累计亏损达到{virtual_trigger}元后开始实投 | 起始余额={start_balance}")
-        else:
-            log(f"[{account}] 固定赢冲输缩启动 | 一阶={BASE_BET} 二阶={RUSH_BET} | 立即实投 | 起始余额={start_balance}")
+        log(f"[{account}] 固定赢冲输缩启动 | 一阶={BASE_BET} 二阶={RUSH_BET} | 立即实投 | 起始余额={start_balance}")
     log(f"[{account}] 时间参数 | 下注窗口={WIN_MIN}-{WIN_MAX}秒 封盘缓冲>{CLOSE_BUFFER}秒 开奖延迟+{DRAW_DELAY}秒")
 
     while not stop_event.is_set():
@@ -286,8 +207,6 @@ def _betting_loop(page, account, cfg, stop_event, log):
                             if pos_steps[i] < 2:
                                 pos_steps[i] = 2
                                 log(f"[{account}]   -> 下期升二阶赢冲 ({BASE_BET}->{RUSH_BET})")
-                            elif conditional:
-                                log(f"[{account}]   -> 下期继续二阶赢冲 ({RUSH_BET})")
                             else:
                                 pos_steps[i] = 1
                                 log(f"[{account}]   -> 固定模式二阶已完成，下期回一阶底注 ({RUSH_BET}->{BASE_BET})")
@@ -329,22 +248,6 @@ def _betting_loop(page, account, cfg, stop_event, log):
                 last_issue = issue
                 handled_draw = True
 
-            if handled_draw and conditional:
-                new_tier, action = _next_tier(tier, profit, TIER_LIST, THRESHOLDS)
-                if action == "reset":
-                    tier = new_tier
-                    BASE_BET, RUSH_BET = TIER_LIST[tier]
-                    pos_steps = [1, 1, 1]
-                    sleep_remaining = 0
-                    log(f"[{account}] 利润回正，档位重置 | 当前利润={profit:+.0f} | 档{tier + 1} 一阶={BASE_BET} 二阶={RUSH_BET}")
-                elif action == "upgrade":
-                    crossed = THRESHOLDS[tier]
-                    tier = new_tier
-                    BASE_BET, RUSH_BET = TIER_LIST[tier]
-                    pos_steps = [1, 1, 1]
-                    sleep_remaining = SLEEPS
-                    log(f"[{account}] 累计亏损{-profit:.0f}>{crossed}，升至档{tier + 1} | 一阶={BASE_BET} 二阶={RUSH_BET} | 先休眠{SLEEPS}期")
-
         cd = _get_countdown(page)
         if cd < 0:
             time.sleep(2)
@@ -359,24 +262,14 @@ def _betting_loop(page, account, cfg, stop_event, log):
             continue
 
         if WIN_MIN <= cd <= WIN_MAX and not bet_placed:
-            if sleep_remaining > 0:
-                sleep_remaining -= 1
-                log(f"[{account}] 升档休眠中，本期跳过下注 | 剩余={sleep_remaining}期 | 档{tier + 1} {BASE_BET}/{RUSH_BET}")
-                bet_placed = True
-                remain = _get_countdown(page)
-                _sleep_interruptible((remain if remain > 0 else 30) + 10, stop_event)
-                bet_placed = False
-                continue
-
             targets = [sorted(random.sample(range(10), NUMBERS_PER_POS)) for _ in range(NUM_POSITIONS)]
             amounts = [RUSH_BET if pos_steps[i] == 2 else BASE_BET for i in range(NUM_POSITIONS)]
 
             step_info = " | ".join(
                 f"球{i+1}:{'二阶赢冲' if pos_steps[i]==2 else '一阶底注'}({amounts[i]})" for i in range(NUM_POSITIONS)
             )
-            prefix = f"档{tier + 1} " if conditional else ""
             phase = "模拟投注" if virtual_active else "实投下注"
-            log(f"[{account}] {prefix}{phase}计划 | 选号={targets}")
+            log(f"[{account}] {phase}计划 | 选号={targets}")
             log(f"[{account}] 注码计划 | {step_info}")
 
             delay = random.uniform(2.0, 6.0)

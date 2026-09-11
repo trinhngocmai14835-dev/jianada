@@ -46,6 +46,9 @@ export const api = {
   analyzeCustomWinBet: (data) => req('POST', '/custom-winbet/analyze', data),
   getMainTrendBetConfig: () => req('GET', '/config/main-trend-bet'),
   saveMainTrendBetConfig: (data) => req('POST', '/config/main-trend-bet', data),
+  getFourCodeWinBetConfig: () => req('GET', '/config/four-code-winbet'),
+  saveFourCodeWinBetConfig: (data) => req('POST', '/config/four-code-winbet', data),
+  analyzeFourCodeWinBet: (data) => req('POST', '/four-code-winbet/analyze', data),
 
   // 状态
   getStatus: () => req('GET', '/status'),
@@ -81,6 +84,10 @@ export const api = {
   stopMainTrendBet: () => req('POST', '/main-trend-bet/stop'),
   getMainTrendBetAccountStatuses: () => req('GET', '/main-trend-bet/accounts/status'),
   stopMainTrendBetAccount: (key) => req('POST', '/main-trend-bet/accounts/stop', { key }),
+  startFourCodeWinBet: () => req('POST', '/four-code-winbet/start'),
+  stopFourCodeWinBet: () => req('POST', '/four-code-winbet/stop'),
+  getFourCodeWinBetAccountStatuses: () => req('GET', '/four-code-winbet/accounts/status'),
+  stopFourCodeWinBetAccount: (key) => req('POST', '/four-code-winbet/accounts/stop', { key }),
 
   // 投注流水
   getFlow: (account = '', mode = '', limit = 800) =>

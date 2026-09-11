@@ -6,6 +6,7 @@ import { api } from '../api/client'
 const { Text } = Typography
 
 const busyPhases = new Set(['queued', 'checking', 'ready', 'downloading', 'verifying', 'extracting', 'preparing', 'restarting'])
+const restartProbePhases = new Set(['preparing', 'restarting'])
 
 function formatBytes(value) {
   const n = Number(value || 0)
@@ -18,6 +19,10 @@ function clampPercent(value) {
   return Math.max(0, Math.min(100, Math.round(n)))
 }
 
+function sameVersion(a, b) {
+  return String(a || '').trim() && String(a || '').trim() === String(b || '').trim()
+}
+
 export default function UpdateNotice() {
   const [info, setInfo] = useState(null)
   const [checking, setChecking] = useState(false)
@@ -25,10 +30,22 @@ export default function UpdateNotice() {
   const [installStatus, setInstallStatus] = useState(null)
   const pollRef = useRef(null)
   const statusRef = useRef(null)
+  const restartRef = useRef({ active: false, timers: [] })
 
   const saveInstallStatus = (status) => {
     statusRef.current = status
     setInstallStatus(status)
+  }
+
+  const addRestartTimer = (fn, delay) => {
+    const timer = window.setTimeout(fn, delay)
+    restartRef.current.timers.push(timer)
+    return timer
+  }
+
+  const clearRestartTimers = () => {
+    restartRef.current.timers.forEach((timer) => window.clearTimeout(timer))
+    restartRef.current = { active: false, timers: [] }
   }
 
   const stopPolling = () => {
@@ -38,35 +55,99 @@ export default function UpdateNotice() {
     }
   }
 
-  const pollInstallStatus = async () => {
-    const res = await api.getUpdateStatus()
-    if (res?.phase) {
-      saveInstallStatus(res)
-      if (res.phase === 'failed') {
-        stopPolling()
-        setInstalling(false)
-        message.error(res.message || '更新失败')
-      } else if (!res.running && !busyPhases.has(res.phase)) {
-        stopPolling()
-        setInstalling(false)
-      }
-      return
-    }
-
-    if (statusRef.current?.phase === 'restarting') {
-      stopPolling()
-      return
-    }
-
+  const beginRestartHandoff = (latestVersion) => {
+    if (restartRef.current.active) return
+    restartRef.current.active = true
     stopPolling()
-    setInstalling(false)
-    saveInstallStatus({
-      ok: false,
-      running: false,
-      phase: 'failed',
-      percent: statusRef.current?.percent || 0,
-      message: res?.message || '无法读取更新进度',
-    })
+    message.success('更新包已准备好，正在关闭旧版本并等待新版本启动')
+
+    addRestartTimer(() => {
+      try { window.close() } catch (_) {}
+    }, 300)
+
+    const startedAt = Date.now()
+    const targetVersion = latestVersion || statusRef.current?.latest_version || info?.latest_version || ''
+
+    const probe = async () => {
+      try {
+        const res = await fetch(`/api/update/check?t=${Date.now()}`, { cache: 'no-store' })
+        const data = await res.json()
+        if (data?.ok && (sameVersion(data.current_version, targetVersion) || data.has_update === false)) {
+          window.location.replace(`/?updated=${Date.now()}`)
+          return
+        }
+      } catch (_) {
+        // 旧版本正在退出或新版本尚未启动，继续等待。
+      }
+
+      if (Date.now() - startedAt < 90000) {
+        addRestartTimer(probe, 1500)
+        return
+      }
+
+      setInstalling(false)
+      saveInstallStatus({
+        ...(statusRef.current || {}),
+        ok: false,
+        running: false,
+        phase: 'failed',
+        percent: 100,
+        message: '已等待新版本启动，请手动关闭当前窗口后重新打开软件。',
+      })
+      message.warning('已等待新版本启动，请手动关闭当前窗口后重新打开软件')
+    }
+
+    addRestartTimer(probe, 5000)
+  }
+
+  const pollInstallStatus = async () => {
+    try {
+      const res = await api.getUpdateStatus()
+      if (res?.phase) {
+        saveInstallStatus(res)
+        if (res.phase === 'restarting') {
+          beginRestartHandoff(res.latest_version)
+        } else if (res.phase === 'failed') {
+          stopPolling()
+          setInstalling(false)
+          message.error(res.message || '更新失败')
+        } else if (!res.running && !busyPhases.has(res.phase)) {
+          stopPolling()
+          setInstalling(false)
+        }
+        return
+      }
+
+      if (statusRef.current?.phase === 'restarting') {
+        beginRestartHandoff(statusRef.current.latest_version)
+        return
+      }
+
+      stopPolling()
+      setInstalling(false)
+      saveInstallStatus({
+        ok: false,
+        running: false,
+        phase: 'failed',
+        percent: statusRef.current?.percent || 0,
+        message: res?.message || '无法读取更新进度',
+      })
+    } catch (_) {
+      const last = statusRef.current || {}
+      if (restartProbePhases.has(last.phase) || Number(last.percent || 0) >= 96) {
+        beginRestartHandoff(last.latest_version)
+        return
+      }
+      stopPolling()
+      setInstalling(false)
+      saveInstallStatus({
+        ok: false,
+        running: false,
+        phase: 'failed',
+        percent: last.percent || 0,
+        message: '更新连接中断，请重新打开软件后检查版本。',
+      })
+    }
   }
 
   const startPolling = () => {
@@ -100,26 +181,33 @@ export default function UpdateNotice() {
       if (res?.running) {
         setInstalling(true)
         saveInstallStatus(res)
-        startPolling()
+        if (res.phase === 'restarting') beginRestartHandoff(res.latest_version)
+        else startPolling()
       }
     })
-    return stopPolling
+    return () => {
+      stopPolling()
+      clearRestartTimers()
+    }
   }, [])
 
   const install = () => {
     Modal.confirm({
       title: '立即更新软件',
-      content: '更新前请确认所有投注任务已经停止。更新包下载完成后，软件会自动关闭、替换并重新打开。',
+      content: '更新前请确认所有投注任务已经停止。更新包下载完成后，软件会自动关闭、替换并重新打开；当前页面会在新版本启动后自动刷新。',
       okText: '立即更新',
       cancelText: '取消',
       onOk: async () => {
+        clearRestartTimers()
         setInstalling(true)
         saveInstallStatus({ ok: true, running: true, phase: 'queued', percent: 0, message: '正在启动更新任务...' })
         const res = await api.installUpdate()
         if (res?.ok) {
-          saveInstallStatus(res.status || { ok: true, running: true, phase: 'queued', percent: 0, message: res.message || '已开始下载更新包' })
+          const nextStatus = res.status || { ok: true, running: true, phase: 'queued', percent: 0, message: res.message || '已开始下载更新包' }
+          saveInstallStatus(nextStatus)
           message.success(res.message || '已开始下载更新包')
-          startPolling()
+          if (nextStatus.phase === 'restarting') beginRestartHandoff(nextStatus.latest_version)
+          else startPolling()
         } else {
           stopPolling()
           setInstalling(false)
@@ -140,6 +228,7 @@ export default function UpdateNotice() {
   const downloadedBytes = Number(installStatus?.downloaded_bytes || 0)
   const progressDetail = totalBytes > 0 ? `${formatBytes(downloadedBytes)} / ${formatBytes(totalBytes)}` : ''
   const progressState = installStatus?.phase === 'failed' ? 'exception' : installStatus?.phase === 'restarting' ? 'success' : 'active'
+  const updatingText = installStatus?.phase === 'restarting' ? '等待新版本启动' : '立即更新'
 
   return (
     <Alert
@@ -169,8 +258,8 @@ export default function UpdateNotice() {
           <Button icon={<ReloadOutlined />} loading={checking} disabled={installing} onClick={() => check(true)}>
             重新检查
           </Button>
-          <Button type="primary" icon={<DownloadOutlined />} loading={installing} onClick={install}>
-            立即更新
+          <Button type="primary" icon={<DownloadOutlined />} loading={installing} disabled={installStatus?.phase === 'restarting'} onClick={install}>
+            {updatingText}
           </Button>
         </Space>
       )}

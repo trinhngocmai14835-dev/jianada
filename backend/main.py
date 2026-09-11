@@ -48,10 +48,21 @@ def _msgbox(title: str, text: str, icon: int = 0x40):
 
 
 def _open_url(url: str) -> None:
-    import webbrowser
     with clean_subprocess_context():
-        webbrowser.open(url)
-
+        if os.name == "nt":
+            flags = int(getattr(subprocess, "CREATE_NO_WINDOW", 0) or 0)
+            subprocess.Popen(
+                ["cmd.exe", "/d", "/c", "start", "", url],
+                env=sanitized_subprocess_env(),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                close_fds=True,
+                creationflags=flags,
+            )
+        else:
+            import webbrowser
+            webbrowser.open(url)
 
 def _check_port(port: int = 8080):
     if not _port_in_use(port):

@@ -21,8 +21,14 @@ from services.custom_win_bet_svc import (
     get_account_statuses as custom_winbet_account_statuses,
     stop_account as stop_custom_winbet_account,
 )
+from services.four_code_win_bet_svc import (
+    run as four_code_winbet_run,
+    get_account_statuses as four_code_winbet_account_statuses,
+    stop_account as stop_four_code_winbet_account,
+)
 from services.custom_rotate_analysis_svc import analyze_custom_rotatebet_payload
 from services.custom_win_analysis_svc import analyze_custom_winbet_payload
+from services.four_code_win_analysis_svc import analyze_four_code_winbet_payload
 from services.main_trend_bet_svc import (
     run as main_trend_bet_run,
     get_account_statuses as main_trend_bet_account_statuses,
@@ -41,6 +47,7 @@ TASK_LABELS = {
     "rotatebet": "轮换追损",
     "custom_rotatebet": "自定义金额轮换追损",
     "custom_winbet": "自定义金额轮换赢冲",
+    "four_code_winbet": "4粒码赢冲输缩",
     "main_trend_bet": "主势大小单双追损",
 }
 
@@ -67,6 +74,14 @@ def _normalize_start_config(cfg: dict, default_time: str = "08:00") -> dict:
         out["start_time"] = default_time
     return out
 
+
+def _normalize_rushbet_config(cfg: dict) -> dict:
+    out = _normalize_start_config(cfg, DEFAULT_RUSHBET["start_time"])
+    out["strategy_mode"] = "simple"
+    for key in ("conditional_tiers", "loss_thresholds", "sleep_periods"):
+        out.pop(key, None)
+    return out
+
 # ── 默认配置 ──────────────────────────────────────────────────
 
 DEFAULT_RUSHBET = {
@@ -76,18 +91,10 @@ DEFAULT_RUSHBET = {
     # 启动方式：now=随开随跑（点开始就下注） / scheduled=闹钟定时（先登录待机，到点才下注）
     "start_mode": "now",
     "start_time": "08:00",   # 闹钟时刻 HH:MM，仅 start_mode=scheduled 时生效
-    "strategy_mode": "conditional",
+    "strategy_mode": "simple",
     "base_bet_amount": 500,
     "rush_bet_amount": 700,
     "virtual_loss_trigger": 0,  # 固定赢冲输缩：0=立即实投；>0=先模拟，虚拟累计亏损达到该金额后实投
-    # 条件赢冲输缩档位参数（可在前端手动修改）
-    "conditional_tiers": [
-        {"base": 50, "rush": 70},
-        {"base": 70, "rush": 98},
-        {"base": 100, "rush": 140},
-    ],
-    "loss_thresholds": [2000, 3000],
-    "sleep_periods": 3,
     "daily_stop_loss": 29000,
     "take_profit": 25000,
     "odds": 9.92,
@@ -142,6 +149,29 @@ DEFAULT_CUSTOM_WINBET = {
     "enabled_positions": [True, True, True],
     "start_mode": "now",
     "start_time": "09:00",
+}
+
+DEFAULT_FOUR_CODE_WINBET = {
+    "entry_url": "https://166.tt",
+    "safe_code": "",
+    "accounts": [{"account": "", "password": "", "port": 9222}],
+    "number_groups": [
+        {"numbers": [0, 1, 3, 8]},
+        {"numbers": [0, 1, 3, 8]},
+        {"numbers": [0, 1, 3, 8]},
+    ],
+    "amount_steps": [100, 130, 299, 389, 506],
+    "base_bet_amount": 100,
+    "enabled_positions": [True, True, True],
+    "daily_stop_loss": 29000,
+    "take_profit": 25000,
+    "odds": 9.92,
+    "rebate_rate": 0.0073,
+    "start_mode": "now",
+    "start_time": "09:00",
+    "bet_window_max": 90,
+    "draw_delay": 73,
+    "settlement_wake_early": 8,
 }
 
 DEFAULT_MAIN_TREND_BET = {
@@ -243,15 +273,14 @@ def debug_queue(task_id: str):
 
 @router.get("/config/rushbet")
 def get_rushbet_config():
-    # 合并默认值：老客户已保存的配置可能缺少新增字段（档位/阈值/休眠），用默认补齐
-    return _normalize_start_config({**DEFAULT_RUSHBET, **get_config("rushbet_config", {})}, DEFAULT_RUSHBET["start_time"])
+    return _normalize_rushbet_config({**DEFAULT_RUSHBET, **get_config("rushbet_config", {})})
 
 
 @router.post("/config/rushbet")
 def save_rushbet_config(data: dict):
     existing = get_config("rushbet_config", DEFAULT_RUSHBET)
     existing.update(data)
-    existing = _normalize_start_config(existing, DEFAULT_RUSHBET["start_time"])
+    existing = _normalize_rushbet_config(existing)
     set_config("rushbet_config", existing)
     return {"ok": True}
 
@@ -357,6 +386,25 @@ def save_custom_winbet_config(data: dict):
     return {"ok": True}
 
 
+@router.get("/config/four-code-winbet")
+def get_four_code_winbet_config():
+    cfg = _normalize_start_config({**DEFAULT_FOUR_CODE_WINBET, **get_config("four_code_winbet_config", {})}, DEFAULT_FOUR_CODE_WINBET["start_time"])
+    cfg.pop("budget", None)
+    cfg.pop("analysis_budget", None)
+    return cfg
+
+
+@router.post("/config/four-code-winbet")
+def save_four_code_winbet_config(data: dict):
+    existing = get_config("four_code_winbet_config", DEFAULT_FOUR_CODE_WINBET)
+    existing.update(data)
+    existing.pop("budget", None)
+    existing.pop("analysis_budget", None)
+    existing = _normalize_start_config(existing, DEFAULT_FOUR_CODE_WINBET["start_time"])
+    set_config("four_code_winbet_config", existing)
+    return {"ok": True}
+
+
 @router.get("/config/main-trend-bet")
 def get_main_trend_bet_config():
     return _normalize_start_config({**DEFAULT_MAIN_TREND_BET, **get_config("main_trend_bet_config", {})}, DEFAULT_MAIN_TREND_BET["start_time"])
@@ -423,7 +471,7 @@ def start_rushbet():
     ok, msg = _check_license()
     if not ok:
         return {"ok": False, "message": msg}
-    cfg = _normalize_start_config({**DEFAULT_RUSHBET, **get_config("rushbet_config", {})}, DEFAULT_RUSHBET["start_time"])
+    cfg = _normalize_rushbet_config({**DEFAULT_RUSHBET, **get_config("rushbet_config", {})})
     ok, msg = _check_account_whitelist("rushbet", cfg)
     if not ok:
         return {"ok": False, "message": msg}
@@ -584,10 +632,19 @@ class CustomWinAnalysisRequest(BaseModel):
     limit: int = 1000
 
 
+class FourCodeWinAnalysisRequest(BaseModel):
+    config: dict[str, Any] = {}
+    records: list[dict[str, Any]] = []
+    text: str = ""
+    limit: int = 1000
+
+
 class StopCustomWinBetAccountRequest(BaseModel):
     key: str
 
 
+class StopFourCodeWinBetAccountRequest(BaseModel):
+    key: str
 
 
 @router.post("/custom-winbet/analyze")
@@ -605,6 +662,49 @@ def api_custom_winbet_analyze(req: CustomWinAnalysisRequest):
 def stop_custom_winbet_account_route(req: StopCustomWinBetAccountRequest):
     ok, msg = stop_custom_winbet_account(req.key)
     return {"ok": ok, "message": msg}
+
+
+@router.post("/four-code-winbet/start")
+def start_four_code_winbet():
+    ok, msg = _check_license()
+    if not ok:
+        return {"ok": False, "message": msg}
+    cfg = _normalize_start_config({**DEFAULT_FOUR_CODE_WINBET, **get_config("four_code_winbet_config", {})}, DEFAULT_FOUR_CODE_WINBET["start_time"])
+    ok, msg = _check_account_whitelist("four_code_winbet", cfg)
+    if not ok:
+        return {"ok": False, "message": msg}
+    ok, msg = TaskManager.get().start("four_code_winbet", four_code_winbet_run, cfg)
+    return {"ok": ok, "message": msg}
+
+
+@router.post("/four-code-winbet/stop")
+def stop_four_code_winbet():
+    ok, msg = TaskManager.get().stop("four_code_winbet")
+    return {"ok": ok, "message": msg}
+
+
+@router.get("/four-code-winbet/accounts/status")
+def four_code_winbet_account_status():
+    return {"accounts": four_code_winbet_account_statuses()}
+
+
+@router.post("/four-code-winbet/accounts/stop")
+def stop_four_code_winbet_account_route(req: StopFourCodeWinBetAccountRequest):
+    ok, msg = stop_four_code_winbet_account(req.key)
+    return {"ok": ok, "message": msg}
+
+
+@router.post("/four-code-winbet/analyze")
+def api_four_code_winbet_analyze(req: FourCodeWinAnalysisRequest):
+    data = req.model_dump() if hasattr(req, "model_dump") else req.dict()
+    cfg = {**DEFAULT_FOUR_CODE_WINBET, **get_config("four_code_winbet_config", {}), **(data.get("config") or {})}
+    cfg.pop("budget", None)
+    cfg.pop("analysis_budget", None)
+    record_source = _load_backtest_records(data)
+    data["config"] = cfg
+    result = analyze_four_code_winbet_payload(data)
+    result["record_source"] = record_source
+    return result
 
 
 @router.post("/main-trend-bet/start")

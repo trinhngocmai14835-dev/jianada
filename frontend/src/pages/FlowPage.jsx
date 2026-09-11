@@ -13,10 +13,11 @@ const MODE_LABEL = {
   rotatebet: '轮换追损',
   custom_rotatebet: '自定义金额轮换追损',
   custom_winbet: '自定义金额轮换赢冲',
+  four_code_winbet: '4粒码赢冲输缩',
   main_trend_bet: '主势大小单双追损',
 }
 const MODE_COLOR = {
-  rushbet: 'volcano', followbet: 'green', rotatebet: 'purple', custom_rotatebet: 'magenta', custom_winbet: 'gold', main_trend_bet: 'cyan',
+  rushbet: 'volcano', followbet: 'green', rotatebet: 'purple', custom_rotatebet: 'magenta', custom_winbet: 'gold', four_code_winbet: 'lime', main_trend_bet: 'cyan',
 }
 
 export default function FlowPage() {

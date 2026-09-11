@@ -1,8 +1,8 @@
 {
-    "version":  "2026.09.10.1",
-    "url":  "https://pub-465f078b4f484662b30eb39d27ae5155.r2.dev/releases/jianada-2026.09.10.1.zip",
-    "sha256":  "67e02c0c3d40d7a47dfc41fd6f627f752891ffb2809ece7e6647ae261daebbe7",
-    "size":  245465240,
-    "notes":  "Add draw history analysis capture, custom rotate/win recommendation improvements, main-trend betting updates, remove unused auto/pick betting entries, and add draw-analysis browser launcher.",
-    "force":  false
+    "version": "2026.09.11.1",
+    "url": "https://pub-465f078b4f484662b30eb39d27ae5155.r2.dev/releases/jianada-2026.09.11.1.zip",
+    "sha256": "2331f04189bfb3cbc239e48f48203ddbce7f442c7b10d875cb785717455c7846",
+    "size": 245079839,
+    "notes": "Fix auto-update restart/refresh flow, add 4-code win-rush shrink betting with three recommendation plans, and simplify recommendation budget input.",
+    "force": false
 }

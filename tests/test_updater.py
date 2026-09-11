@@ -104,7 +104,9 @@ def test_helper_script_forces_old_process_and_restarts_from_app_dir():
         body = script.read_text(encoding="utf-8-sig")
         check("Stop-Process -Id $pidToWait -Force" in body, "current process is force-stopped when graceful exit stalls")
         check("function Stop-OldAppProcesses" in body, "same executable processes are guarded")
+        check("function Close-AppBrowserWindows" in body, "localhost browser window is asked to close during update")
         check("function Clear-PyInstallerEnv" in body, "helper clears inherited PyInstaller environment")
+        check('_PYI*' in body and 'PYINSTALLER_*' in body, "helper removes all PyInstaller runtime env names")
         check("PYINSTALLER_RESET_ENVIRONMENT" in body, "new app is launched as a fresh PyInstaller top-level process")
         check("Get-CimInstance Win32_Process" in body, "old app process detection has a CIM fallback")
         check("Start-Process -FilePath $dst -WorkingDirectory $dir" in body, "new app restarts from its install directory")
@@ -179,11 +181,52 @@ def test_pyinstaller_child_environment_is_sanitized():
                 pass
 
 
+
+def test_exit_watchdog_uses_detached_powershell():
+    print("[8] detached exit watchdog")
+    calls = []
+    old_name = updater.os.name
+    old_popen = updater.subprocess.Popen
+    saved_flags = {name: getattr(updater.subprocess, name, None) for name in ["CREATE_NO_WINDOW", "CREATE_NEW_PROCESS_GROUP", "DETACHED_PROCESS"]}
+
+    def fake_popen(*args, **kwargs):
+        calls.append((args, kwargs))
+        class Dummy:
+            pass
+        return Dummy()
+
+    try:
+        updater.os.name = "nt"
+        updater.subprocess.CREATE_NO_WINDOW = 0x08000000
+        updater.subprocess.CREATE_NEW_PROCESS_GROUP = 0x00000200
+        updater.subprocess.DETACHED_PROCESS = 0x00000008
+        updater.subprocess.Popen = fake_popen
+        ok = updater._spawn_exit_watchdog(12345, 3)
+    finally:
+        updater.os.name = old_name
+        updater.subprocess.Popen = old_popen
+        for name, value in saved_flags.items():
+            if value is None:
+                try:
+                    delattr(updater.subprocess, name)
+                except AttributeError:
+                    pass
+            else:
+                setattr(updater.subprocess, name, value)
+
+    check(ok is True, "watchdog is scheduled on Windows")
+    args, kwargs = calls[0]
+    command = args[0]
+    check(command[0] == "powershell.exe", "watchdog uses PowerShell instead of cmd timeout")
+    check("-WindowStyle" in command and "Hidden" in command, "watchdog PowerShell window is hidden")
+    check("Stop-Process -Id 12345 -Force" in command[-1], "watchdog force-stops current process")
+    check(kwargs.get("env", {}).get("PYINSTALLER_RESET_ENVIRONMENT") == "1", "watchdog receives clean PyInstaller env")
+
 def main():
     print("=" * 56)
     print("updater tests")
     print("=" * 56)
-    for fn in [test_version_compare, test_trusted_update_url, test_manifest_accepts_utf8_bom, test_non_frozen_install_blocked, test_helper_script_forces_old_process_and_restarts_from_app_dir, test_helper_process_is_hidden_and_detached, test_pyinstaller_child_environment_is_sanitized]:
+    for fn in [test_version_compare, test_trusted_update_url, test_manifest_accepts_utf8_bom, test_non_frozen_install_blocked, test_helper_script_forces_old_process_and_restarts_from_app_dir, test_helper_process_is_hidden_and_detached, test_pyinstaller_child_environment_is_sanitized, test_exit_watchdog_uses_detached_powershell]:
         fn()
     print("=" * 56)
     print("ALL OK")
