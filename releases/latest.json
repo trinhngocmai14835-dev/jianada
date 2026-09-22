@@ -1,8 +1,8 @@
 {
-    "version": "2026.09.11.1",
-    "url": "https://pub-465f078b4f484662b30eb39d27ae5155.r2.dev/releases/jianada-2026.09.11.1.zip",
-    "sha256": "2331f04189bfb3cbc239e48f48203ddbce7f442c7b10d875cb785717455c7846",
-    "size": 245079839,
-    "notes": "Fix auto-update restart/refresh flow, add 4-code win-rush shrink betting with three recommendation plans, and simplify recommendation budget input.",
-    "force": false
+    "version":  "2026.09.22.1",
+    "url":  "https://pub-465f078b4f484662b30eb39d27ae5155.r2.dev/releases/jianada-2026.09.22.1.zip",
+    "sha256":  "26ade522106dc15b6e43a3f1042d2594b306f8c3eb00deafe46bfcda74864d92",
+    "size":  244878864,
+    "notes":  "Add random number rotate-loss betting mode with per-ball random counts and multi-account shared targets.",
+    "force":  false
 }

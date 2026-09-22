@@ -1,4 +1,4 @@
-﻿"""Independent custom-amount rotate-loss betting service."""
+"""Independent custom-amount rotate-loss betting service."""
 import asyncio
 import queue
 import random

@@ -53,7 +53,7 @@ if not "%PYARMOR_RUNTIME%"=="" (
   echo PyArmor runtime detected: %PYARMOR_RUNTIME%
 )
 
-set MAIN_PY=main.py
+set MAIN_PY=backend\main.py
 if exist "%~dp0backend\obf_build\main.py" set MAIN_PY=%~dp0backend\obf_build\main.py
 
 pyinstaller ^
