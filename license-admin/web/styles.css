@@ -364,6 +364,14 @@ textarea {
   padding: 40px 16px;
 }
 
+/* The sidebar consumes 248px, so the two admin panels need to stack well before
+   the whole page becomes a single-column mobile layout. */
+@media (max-width: 1280px) {
+  .grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 @media (max-width: 900px) {
   .shell {
     grid-template-columns: 1fr;
