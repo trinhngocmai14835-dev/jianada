@@ -16,6 +16,11 @@ from services.custom_rotate_bet_svc import (
     get_account_statuses as custom_rotatebet_account_statuses,
     stop_account as stop_custom_rotatebet_account,
 )
+from services.random_rotate_bet_svc import (
+    run as random_rotate_bet_run,
+    get_account_statuses as random_rotatebet_account_statuses,
+    stop_account as stop_random_rotatebet_account,
+)
 from services.custom_win_bet_svc import (
     run as custom_win_bet_run,
     get_account_statuses as custom_winbet_account_statuses,
@@ -46,6 +51,7 @@ TASK_LABELS = {
     "followbet": "多账号跟投",
     "rotatebet": "轮换追损",
     "custom_rotatebet": "自定义金额轮换追损",
+    "random_rotatebet": "随机码追损",
     "custom_winbet": "自定义金额轮换赢冲",
     "four_code_winbet": "4粒码赢冲输缩",
     "main_trend_bet": "主势大小单双追损",
@@ -141,6 +147,13 @@ DEFAULT_CUSTOM_ROTATEBET = {
     "start_time": "09:00",
 }
 
+DEFAULT_RANDOM_ROTATEBET = {
+    **DEFAULT_CUSTOM_ROTATEBET,
+    "random_counts": [5, 5, 5],
+    "entry_miss_trigger": 0,
+    "start_mode": "now",
+    "start_time": "09:00",
+}
 DEFAULT_CUSTOM_WINBET = {
     **DEFAULT_CUSTOM_ROTATEBET,
     "amount_steps": [100, 130, 299, 389, 506],
@@ -372,6 +385,19 @@ def save_custom_rotatebet_config(data: dict):
     return {"ok": True}
 
 
+@router.get("/config/random-rotatebet")
+def get_random_rotatebet_config():
+    return _normalize_start_config({**DEFAULT_RANDOM_ROTATEBET, **get_config("random_rotatebet_config", {})}, DEFAULT_RANDOM_ROTATEBET["start_time"])
+
+
+@router.post("/config/random-rotatebet")
+def save_random_rotatebet_config(data: dict):
+    existing = get_config("random_rotatebet_config", DEFAULT_RANDOM_ROTATEBET)
+    existing.update(data)
+    existing = _normalize_start_config(existing, DEFAULT_RANDOM_ROTATEBET["start_time"])
+    set_config("random_rotatebet_config", existing)
+    return {"ok": True}
+
 @router.get("/config/custom-winbet")
 def get_custom_winbet_config():
     return _normalize_start_config({**DEFAULT_CUSTOM_WINBET, **get_config("custom_winbet_config", {})}, DEFAULT_CUSTOM_WINBET["start_time"])
@@ -538,6 +564,35 @@ def stop_custom_rotatebet_account_route(req: StopCustomRotateBetAccountRequest):
     return {"ok": ok, "message": msg}
 
 
+
+@router.post("/random-rotatebet/start")
+def start_random_rotatebet():
+    ok, msg = _check_license()
+    if not ok:
+        return {"ok": False, "message": msg}
+    cfg = _normalize_start_config({**DEFAULT_RANDOM_ROTATEBET, **get_config("random_rotatebet_config", {})}, DEFAULT_RANDOM_ROTATEBET["start_time"])
+    ok, msg = _check_account_whitelist("random_rotatebet", cfg)
+    if not ok:
+        return {"ok": False, "message": msg}
+    ok, msg = TaskManager.get().start("random_rotatebet", random_rotate_bet_run, cfg)
+    return {"ok": ok, "message": msg}
+
+
+@router.post("/random-rotatebet/stop")
+def stop_random_rotatebet():
+    ok, msg = TaskManager.get().stop("random_rotatebet")
+    return {"ok": ok, "message": msg}
+
+
+@router.get("/random-rotatebet/accounts/status")
+def random_rotatebet_account_status():
+    return {"accounts": random_rotatebet_account_statuses()}
+
+
+@router.post("/random-rotatebet/accounts/stop")
+def stop_random_rotatebet_account_route(req: StopCustomRotateBetAccountRequest):
+    ok, msg = stop_random_rotatebet_account(req.key)
+    return {"ok": ok, "message": msg}
 
 def _snapshot_meta(snapshot: dict[str, Any] | None) -> dict[str, Any] | None:
     if not snapshot:
