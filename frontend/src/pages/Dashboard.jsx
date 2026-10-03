@@ -13,7 +13,7 @@ const STATUS_TAG = {
 }
 
 export default function Dashboard({ licenseInfo }) {
-  const [status, setStatus] = useState({ rushbet: 'stopped', followbet: 'stopped', rotatebet: 'stopped', custom_rotatebet: 'stopped', custom_winbet: 'stopped', four_code_winbet: 'stopped', main_trend_bet: 'stopped' })
+  const [status, setStatus] = useState({ rushbet: 'stopped', followbet: 'stopped', rotatebet: 'stopped', custom_rotatebet: 'stopped', five_group_rotatebet: 'stopped', custom_winbet: 'stopped', four_code_winbet: 'stopped', main_trend_bet: 'stopped' })
   const [loading, setLoading] = useState({})
 
   const refresh = async () => {
@@ -37,6 +37,8 @@ export default function Dashboard({ licenseInfo }) {
         'followbet-stop': api.stopFollowBet,
         'custom-rotatebet-start': api.startCustomRotateBet,
         'custom-rotatebet-stop': api.stopCustomRotateBet,
+        'five-group-rotatebet-start': api.startFiveGroupRotateBet,
+        'five-group-rotatebet-stop': api.stopFiveGroupRotateBet,
         'main-trend-bet-start': api.startMainTrendBet,
         'main-trend-bet-stop': api.stopMainTrendBet,
         'four-code-winbet-start': api.startFourCodeWinBet,
@@ -181,6 +183,43 @@ export default function Dashboard({ licenseInfo }) {
                   disabled={status.custom_rotatebet === 'stopped'}
                   loading={loading['custom_rotatebet-stop']}
                   onClick={() => ctrl('custom-rotatebet-stop', 'custom_rotatebet-stop')}
+                >
+                  停止
+                </Button>
+              </Space>
+            </Space>
+          </Card>
+        </Col>
+        <Col xs={24} md={12}>
+          <Card
+            title={<Space><RetweetOutlined style={{ color: '#2f54eb' }} /><span>私定五码组三球追损</span></Space>}
+            extra={STATUS_TAG[status.five_group_rotatebet] || STATUS_TAG.stopped}
+            style={{ borderRadius: 12, marginBottom: 24 }}
+          >
+            <Space direction="vertical" style={{ width: '100%' }} size={16}>
+              <Text type="secondary">A-E 五组同时覆盖 05、16、27、38、49；每组跨三球共 6 个号码，任一球命中即回第 1 阶。</Text>
+              <Row gutter={16}>
+                <Col span={12}>
+                  <Statistic title="状态" value={status.five_group_rotatebet === 'running' ? '运行中' : '已停止'} />
+                </Col>
+              </Row>
+              <Space>
+                <Button
+                  type="primary"
+                  icon={<PlayCircleOutlined />}
+                  disabled={status.five_group_rotatebet === 'running'}
+                  loading={loading['five_group_rotatebet']}
+                  onClick={() => ctrl('five-group-rotatebet-start', 'five_group_rotatebet')}
+                  style={{ background: '#2f54eb', borderColor: '#2f54eb' }}
+                >
+                  启动
+                </Button>
+                <Button
+                  danger
+                  icon={<PauseCircleOutlined />}
+                  disabled={status.five_group_rotatebet === 'stopped'}
+                  loading={loading['five_group_rotatebet-stop']}
+                  onClick={() => ctrl('five-group-rotatebet-stop', 'five_group_rotatebet-stop')}
                 >
                   停止
                 </Button>

@@ -20,6 +20,7 @@ import FlowPage from './pages/FlowPage'
 import RotateBetPage from './pages/RotateBetPage'
 import CustomRotateBetPage from './pages/CustomRotateBetPage'
 import RandomRotateBetPage from './pages/RandomRotateBetPage'
+import FiveGroupRotateBetPage from './pages/FiveGroupRotateBetPage'
 import CustomWinBetPage from './pages/CustomWinBetPage'
 import MainTrendBetPage from './pages/MainTrendBetPage'
 import DrawAnalysisPage from './pages/DrawAnalysisPage'
@@ -35,6 +36,7 @@ const NAV_ITEMS = [
   { key: '/rotatebet', icon: <RetweetOutlined />, label: '轮换追损' },
   { key: '/custom-rotatebet', icon: <RetweetOutlined />, label: '自定义金额轮换追损' },
   { key: '/random-rotatebet', icon: <RetweetOutlined />, label: '随机码追损' },
+  { key: '/five-group-rotatebet', icon: <RetweetOutlined />, label: '私定五码组三球追损' },
   { key: '/custom-winbet', icon: <RetweetOutlined />, label: '自定义金额轮换赢冲' },
   { key: '/main-trend-bet', icon: <RetweetOutlined />, label: '主势大小单双追损' },
   { key: '/four-code-winbet', icon: <BarChartOutlined />, label: '4粒码赢冲输缩' },
@@ -82,6 +84,7 @@ function AppLayout({ licenseInfo, onReload }) {
             <Route path="/rotatebet" element={<RotateBetPage />} />
             <Route path="/custom-rotatebet" element={<CustomRotateBetPage />} />
             <Route path="/random-rotatebet" element={<RandomRotateBetPage />} />
+            <Route path="/five-group-rotatebet" element={<FiveGroupRotateBetPage />} />
             <Route path="/custom-winbet" element={<CustomWinBetPage />} />
             <Route path="/main-trend-bet" element={<MainTrendBetPage />} />
             <Route path="/four-code-winbet" element={<FourCodeWinBetPage />} />
