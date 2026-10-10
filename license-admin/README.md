@@ -1,4 +1,4 @@
-﻿# Jianada License Admin
+# Jianada License Admin
 
 Minimal admin portal for customer licenses and account whitelist publishing.
 
@@ -51,6 +51,28 @@ Smoke test data currently exists for machine `ADMINTEST0000001`, with public R2 
 ```text
 https://pub-465f078b4f484662b30eb39d27ae5155.r2.dev/account-whitelist/ADMINTEST0000001.json
 ```
+## Customer renewal flow
+
+The desktop app uses an offline signed license code. Editing the expiry date in
+this admin portal is not enough by itself: after changing or extending the
+expiry, generate a new license code and send it to the customer so they can
+activate it in the desktop app.
+
+Recommended steps:
+
+1. Open the admin URL and log in.
+2. Select the customer and the bound machine ID.
+3. Use `延长 7 天`, `延长 30 天`, `延长 90 天`, or fill `延期天数` and click
+   `按填写天数延期并生成授权码`.
+4. Click `复制授权码` and send the code to the customer.
+5. The license generation buttons also save the current whitelist accounts and
+   sync the whitelist JSON to R2. Use `保存机器码` only when you want to change
+   whitelist accounts without generating a new license code.
+
+The `按到期日生成授权码` button now uses the date currently shown in the card, so
+an unsaved expiry date will not accidentally generate a code for the old stored
+date.
+
 ## Cloudflare setup outline
 
 1. Copy `wrangler.toml.example` to `wrangler.toml`.

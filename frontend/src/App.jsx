@@ -21,6 +21,9 @@ import PickBetPage from './pages/PickBetPage'
 import FollowBetPage from './pages/FollowBetPage'
 import FlowPage from './pages/FlowPage'
 import RotateBetPage from './pages/RotateBetPage'
+import CustomRotateBetPage from './pages/CustomRotateBetPage'
+import CustomWinBetPage from './pages/CustomWinBetPage'
+import MainTrendBetPage from './pages/MainTrendBetPage'
 
 const { Sider, Content, Header } = Layout
 const { Text } = Typography
@@ -32,6 +35,9 @@ const NAV_ITEMS = [
   { key: '/pickbet', icon: <AimOutlined />, label: '自选号赢冲' },
   { key: '/followbet', icon: <TeamOutlined />, label: '多账号跟投' },
   { key: '/rotatebet', icon: <RetweetOutlined />, label: '轮换追损' },
+  { key: '/custom-rotatebet', icon: <RetweetOutlined />, label: '自定义金额轮换追损' },
+  { key: '/custom-winbet', icon: <RetweetOutlined />, label: '自定义金额轮换赢冲' },
+  { key: '/main-trend-bet', icon: <RetweetOutlined />, label: '主势大小单双追损' },
   { key: '/flow', icon: <ProfileOutlined />, label: '投注流水' },
   { key: '/license', icon: <KeyOutlined />, label: '授权管理' },
 ]
@@ -75,6 +81,9 @@ function AppLayout({ licenseInfo, onReload }) {
             <Route path="/pickbet" element={<PickBetPage />} />
             <Route path="/followbet" element={<FollowBetPage />} />
             <Route path="/rotatebet" element={<RotateBetPage />} />
+            <Route path="/custom-rotatebet" element={<CustomRotateBetPage />} />
+            <Route path="/custom-winbet" element={<CustomWinBetPage />} />
+            <Route path="/main-trend-bet" element={<MainTrendBetPage />} />
             <Route path="/flow" element={<FlowPage />} />
             <Route path="/license" element={
               <div style={{ padding: 24 }}>

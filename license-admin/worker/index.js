@@ -366,6 +366,11 @@ async function generateLicense(request, env, machineIdParam) {
   const expiry = normalizeExpiry(body.expiry || machine.expiry || expiryFromDays(body.days || 30));
   if (!expiry) return json({ ok: false, message: "Expiry date is required" }, 400);
 
+  const hasOwn = (name) => Object.prototype.hasOwnProperty.call(body, name);
+  const accounts = hasOwn("accounts") ? cleanAccounts(body.accounts || []) : cleanAccounts(machine.accounts || []);
+  const enabled = hasOwn("enabled") ? body.enabled !== false : machine.enabled !== false;
+  const remark = hasOwn("remark") ? cleanText(body.remark) : cleanText(machine.remark);
+
   const licenseKey = await signLicense(env.LICENSE_PRIVATE_KEY_PEM, machineId, expiry);
   const now = nowIso();
   await env.DB.batch([
@@ -375,14 +380,14 @@ async function generateLicense(request, env, machineIdParam) {
     ).bind(makeId("lic"), machine.customer_id, machineId, expiry, Number(body.days || 0) || null, licenseKey, now),
     env.DB.prepare(
       `UPDATE machines
-       SET expiry = ?, last_license_key = ?, updated_at = ?
+       SET expiry = ?, enabled = ?, accounts_json = ?, remark = ?, last_license_key = ?, updated_at = ?
        WHERE machine_id = ?`,
-    ).bind(expiry, licenseKey, now, machineId),
+    ).bind(expiry, enabled ? 1 : 0, JSON.stringify(accounts), remark, licenseKey, now, machineId),
   ]);
-  await audit(env, "license.generate", machineId, { expiry });
-  return json({ ok: true, license_key: licenseKey, expiry });
+  await audit(env, "license.generate", machineId, { expiry, accounts_count: accounts.length });
+  const r2 = await publishWhitelist(env, machineId);
+  return json({ ok: true, license_key: licenseKey, expiry, r2 });
 }
-
 async function syncWhitelist(env, machineIdParam) {
   const machineId = normalizeMachineId(machineIdParam);
   if (!machineId) return json({ ok: false, message: "Invalid machine ID" }, 400);
