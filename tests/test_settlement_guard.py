@@ -183,17 +183,18 @@ def test_custom_rotate_amount_state_and_numbers():
     valid_sets = [
         {"set_a": [0, 1, 2, 3], "set_b": [4, 5, 6, 7, 8]},
         {"set_a": [0, 1, 2, 3, 4], "set_b": [5, 6, 7, 8]},
+        {"set_a": [0, 1, 2, 3, 4, 5], "set_b": [4, 5, 6, 7, 8, 9]},
         {"set_a": "0,1,2,3", "set_b": "4,5,6,7,8"},
     ]
     parsed = _parse_custom_number_sets(valid_sets)
-    check(parsed[0][0] == [0, 1, 2, 3] and parsed[0][1] == [4, 5, 6, 7, 8], "custom number parser accepts 4 or 5 numbers")
+    check(parsed[2][0] == [0, 1, 2, 3, 4, 5] and parsed[2][1] == [4, 5, 6, 7, 8, 9], "custom number parser accepts the entered number count")
 
     invalid_sets = [
-        {"set_a": [0, 1, 2], "set_b": [4, 5, 6, 7]},
-        {"set_a": [0, 1, 2, 3], "set_b": [4, 5, 6, 7]},
-        {"set_a": [0, 1, 2, 3], "set_b": [4, 5, 6, 7]},
+        {"set_a": [], "set_b": [4, 5, 6, 7]},
+        {"set_a": [0, 1, 2, 3], "set_b": []},
+        {"set_a": "x", "set_b": [4, 5, 6, 7]},
     ]
-    check(_parse_custom_number_sets(invalid_sets) is None, "custom number parser rejects non 4/5 groups")
+    check(_parse_custom_number_sets(invalid_sets) is None, "custom number parser rejects empty groups")
 
 
 

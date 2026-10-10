@@ -215,9 +215,9 @@ export default function CustomRotateBetPage() {
 
   const numberRule = (_, value) => {
     const nums = parseNums(value)
-    return nums.length === 4 || nums.length === 5
+    return nums.length > 0
       ? Promise.resolve()
-      : Promise.reject(new Error('A/B 组各填 4 个或 5 个有效号码'))
+      : Promise.reject(new Error('至少填 1 个有效号码（0~9）'))
   }
 
   const accountColumns = [
