@@ -1,8 +1,8 @@
 {
-  "version": "2026.10.03.1",
-  "url": "https://pub-465f078b4f484662b30eb39d27ae5155.r2.dev/releases/jianada-2026.10.03.1.zip",
-  "sha256": "cdccd0d34d46010fae57e7bdea1abce64027a6c6da8d381595e2380ccf9135e0",
-  "size": 246086663,
-  "notes": "Add private five-group three-ball rotate-loss mode (05/16/27/38/49) with independent group ladders and protected sequential submission.",
+  "version": "2026.10.11.1",
+  "url": "https://pub-465f078b4f484662b30eb39d27ae5155.r2.dev/releases/jianada-2026.10.11.1.zip",
+  "sha256": "4850e2cf8083d234123012206a106fa75c5c2a408f126c49c455c9a31acf3646",
+  "size": 246085741,
+  "notes": "Custom rotate-loss number groups no longer have a 4/5-number limit; each A/B group accepts any non-empty set of valid numbers.",
   "force": false
 }
