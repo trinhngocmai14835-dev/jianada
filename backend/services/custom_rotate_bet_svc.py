@@ -259,7 +259,8 @@ def _parse_custom_number_sets(raw):
             item = raw[i]
             a = _clean_nums(item.get("set_a", []))
             b = _clean_nums(item.get("set_b", []))
-            if len(a) not in (4, 5) or len(b) not in (4, 5):
+            # 每组只要有有效号码即可；下注时按用户填写的号码数量执行。
+            if not a or not b:
                 return None
             out.append((a, b))
     except (TypeError, AttributeError):

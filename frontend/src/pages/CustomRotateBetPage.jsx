@@ -222,8 +222,8 @@ export default function CustomRotateBetPage() {
     }
     for (let i = 0; i < 3; i += 1) {
       const row = cfg.number_sets?.[i] || {}
-      if (![4, 5].includes(row.set_a?.length) || ![4, 5].includes(row.set_b?.length)) {
-        message.error(`${BALL_LABELS[i]} A/B 组各填 4 个或 5 个有效号码`)
+      if (!row.set_a?.length || !row.set_b?.length) {
+        message.error(`${BALL_LABELS[i]} A/B 组至少填 1 个有效号码`)
         return false
       }
     }
@@ -332,9 +332,9 @@ export default function CustomRotateBetPage() {
 
   const numberRule = (_, value) => {
     const nums = parseNums(value)
-    return nums.length === 4 || nums.length === 5
+    return nums.length > 0
       ? Promise.resolve()
-      : Promise.reject(new Error('A/B 组各填 4 个或 5 个有效号码'))
+      : Promise.reject(new Error('A/B 组至少填 1 个有效号码'))
   }
 
   const accountColumns = [
