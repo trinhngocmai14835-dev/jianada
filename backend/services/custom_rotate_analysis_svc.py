@@ -804,3 +804,143 @@ def analyze_custom_rotatebet_payload(payload: dict[str, Any]) -> dict[str, Any]:
         text=payload.get("text") or "",
         limit=payload.get("limit") or 1000,
     )
+
+
+def backtest_custom_rotatebet_config(
+    config: dict[str, Any], records: Any = None, text: str = "", limit: int = 1000
+) -> dict[str, Any]:
+    """Replay the live custom-rotate state machine and expose every settled bet.
+
+    This deliberately shares the same path state, entry observation, A/B rotation,
+    settlement and rebate rules as the strategy analysis.  It is intended for an
+    auditable backtest ledger, not for choosing or recommending number groups.
+    """
+    cfg = dict(config or {})
+    normalized = normalize_draw_records(records, text)
+    try:
+        requested_limit = int(limit or 1000)
+    except (TypeError, ValueError):
+        requested_limit = 1000
+    normalized = normalized[-min(5000, max(2, requested_limit)):]
+    if len(normalized) < 2:
+        return {"ok": False, "message": "至少需要 2 条开奖记录才能回测。", "records": len(normalized)}
+
+    base_bet = int(_parse_float(cfg.get("base_bet_amount"), 100))
+    amount_steps = _parse_amount_steps(cfg.get("amount_steps"), base_bet) or DEFAULT_AMOUNT_STEPS[:]
+    number_sets = _parse_custom_number_sets(cfg.get("number_sets"))
+    enabled = _parse_enabled_positions(cfg.get("enabled_positions"))
+    entry_misses = _parse_entry_miss_trigger(cfg.get("entry_miss_trigger", 1))
+    odds = _parse_float(cfg.get("odds"), DEFAULT_NUMBER_ODDS)
+    rebate_rate = _parse_float(cfg.get("rebate_rate", cfg.get("rebate", 0)), 0.0)
+
+    if not number_sets:
+        return {"ok": False, "message": "每个球的 A/B 组至少要填写 1 个有效号码。", "records": len(normalized)}
+    if not any(enabled):
+        return {"ok": False, "message": "至少需要启用一路球，才能回测。", "records": len(normalized)}
+
+    paths = [_CustomAmountPathState(amount_steps, entry_misses) for _ in range(NUM_POSITIONS)]
+    pending = _make_plan(paths, number_sets, enabled)
+    ledger: list[dict[str, Any]] = []
+    total_stake = total_payout = total_rebate = total_profit = 0.0
+    wins = 0
+    settled_issues = 0
+
+    for record in normalized[1:]:
+        if pending is not None:
+            issued_bet = False
+            won_positions = [False] * NUM_POSITIONS
+            for pos in range(NUM_POSITIONS):
+                if not pending["active"][pos]:
+                    continue
+                amount = int(pending["amounts"][pos])
+                numbers = list(pending["targets"][pos])
+                tier = min(int(pending["tiers"][pos]), len(amount_steps) - 1)
+                set_label = str(pending["sets"][pos])
+                hit = record.numbers[pos] in numbers
+                stake, net_profit = _settle_number_group(amount, len(numbers), hit, odds, rebate_rate)
+                payout = float(amount) * float(odds) if hit else 0.0
+                rebate = stake * max(0.0, float(rebate_rate or 0))
+                total_stake += stake
+                total_payout += payout
+                total_rebate += rebate
+                total_profit += net_profit
+                wins += int(hit)
+                issued_bet = True
+                ledger.append(
+                    {
+                        "key": f"{record.issue}-{pos + 1}-{len(ledger) + 1}",
+                        "issue": record.issue,
+                        "position": pos + 1,
+                        "name": BALL_LABELS[pos],
+                        "winning_number": record.numbers[pos],
+                        "set": set_label,
+                        "numbers": numbers,
+                        "tier": tier + 1,
+                        "amount_per_number": amount,
+                        "number_count": len(numbers),
+                        "stake": _round(stake),
+                        "payout": _round(payout),
+                        "rebate": _round(rebate),
+                        "profit": _round(net_profit),
+                        "cumulative_profit": _round(total_profit),
+                        "result": "命中" if hit else "未中",
+                    }
+                )
+                if hit:
+                    paths[pos].on_win()
+                    won_positions[pos] = not paths[pos].active
+                else:
+                    paths[pos].on_lose()
+            if issued_bet:
+                settled_issues += 1
+            observe_enabled = [enabled[pos] and not won_positions[pos] for pos in range(NUM_POSITIONS)]
+            _observe_entry(paths, number_sets, record, observe_enabled, targets=pending["targets"])
+            pending = None
+        else:
+            _observe_entry(paths, number_sets, record, enabled, rotate_after=True)
+        pending = _make_plan(paths, number_sets, enabled)
+
+    bets = len(ledger)
+    return {
+        "ok": True,
+        "summary": {
+            "records": len(normalized),
+            "settled_issues": settled_issues,
+            "bets": bets,
+            "wins": wins,
+            "hit_rate": _rate(wins, bets),
+            "stake": _round(total_stake),
+            "payout": _round(total_payout),
+            "rebate": _round(total_rebate),
+            "profit": _round(total_profit),
+            "roi": _round(total_profit / total_stake if total_stake else 0.0, 4),
+            "amount_steps": amount_steps,
+            "entry_miss_trigger": entry_misses,
+            "odds": odds,
+            "rebate_rate": rebate_rate,
+            "latest_issue": normalized[-1].issue,
+        },
+        "ledger": ledger,
+        "next_state": [
+            {
+                "position": index + 1,
+                "name": BALL_LABELS[index],
+                "enabled": enabled[index],
+                "active": path.active,
+                "set": _set_label(path),
+                "tier": path.tier_index + 1,
+                "amount_per_number": path.get_bet(),
+                "entry_loss_count": path.entry_loss_count,
+            }
+            for index, path in enumerate(paths)
+        ],
+    }
+
+
+def backtest_custom_rotatebet_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return backtest_custom_rotatebet_config(
+        payload.get("config") or {},
+        records=payload.get("records"),
+        text=payload.get("text") or "",
+        limit=payload.get("limit") or 1000,
+    )

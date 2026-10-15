@@ -25,6 +25,7 @@ import CustomWinBetPage from './pages/CustomWinBetPage'
 import MainTrendBetPage from './pages/MainTrendBetPage'
 import DrawAnalysisPage from './pages/DrawAnalysisPage'
 import FourCodeWinBetPage from './pages/FourCodeWinBetPage'
+import CustomRotateBacktestPage from './pages/CustomRotateBacktestPage'
 
 const { Sider, Content, Header } = Layout
 const { Text } = Typography
@@ -35,6 +36,7 @@ const NAV_ITEMS = [
   { key: '/followbet', icon: <TeamOutlined />, label: '多账号跟投' },
   { key: '/rotatebet', icon: <RetweetOutlined />, label: '轮换追损' },
   { key: '/custom-rotatebet', icon: <RetweetOutlined />, label: '自定义金额轮换追损' },
+  { key: '/custom-rotate-backtest', icon: <BarChartOutlined />, label: '轮换追损回测计算器' },
   { key: '/random-rotatebet', icon: <RetweetOutlined />, label: '随机码追损' },
   { key: '/five-group-rotatebet', icon: <RetweetOutlined />, label: '私定五码组三球追损' },
   { key: '/custom-winbet', icon: <RetweetOutlined />, label: '自定义金额轮换赢冲' },
@@ -83,6 +85,7 @@ function AppLayout({ licenseInfo, onReload }) {
             <Route path="/followbet" element={<FollowBetPage />} />
             <Route path="/rotatebet" element={<RotateBetPage />} />
             <Route path="/custom-rotatebet" element={<CustomRotateBetPage />} />
+            <Route path="/custom-rotate-backtest" element={<CustomRotateBacktestPage />} />
             <Route path="/random-rotatebet" element={<RandomRotateBetPage />} />
             <Route path="/five-group-rotatebet" element={<FiveGroupRotateBetPage />} />
             <Route path="/custom-winbet" element={<CustomWinBetPage />} />

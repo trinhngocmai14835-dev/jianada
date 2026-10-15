@@ -36,7 +36,7 @@ from services.four_code_win_bet_svc import (
     get_account_statuses as four_code_winbet_account_statuses,
     stop_account as stop_four_code_winbet_account,
 )
-from services.custom_rotate_analysis_svc import analyze_custom_rotatebet_payload
+from services.custom_rotate_analysis_svc import analyze_custom_rotatebet_payload, backtest_custom_rotatebet_payload
 from services.custom_win_analysis_svc import analyze_custom_winbet_payload
 from services.four_code_win_analysis_svc import analyze_four_code_winbet_payload
 from services.main_trend_bet_svc import (
@@ -705,6 +705,17 @@ def api_custom_rotatebet_analyze(req: CustomRotateAnalysisRequest):
     record_source = _load_backtest_records(data)
     data["config"] = cfg
     result = analyze_custom_rotatebet_payload(data)
+    result["record_source"] = record_source
+    return result
+
+
+@router.post("/custom-rotatebet/backtest")
+def api_custom_rotatebet_backtest(req: CustomRotateAnalysisRequest):
+    data = req.model_dump() if hasattr(req, "model_dump") else req.dict()
+    cfg = {**DEFAULT_CUSTOM_ROTATEBET, **get_config("custom_rotatebet_config", {}), **(data.get("config") or {})}
+    record_source = _load_backtest_records(data)
+    data["config"] = cfg
+    result = backtest_custom_rotatebet_payload(data)
     result["record_source"] = record_source
     return result
 

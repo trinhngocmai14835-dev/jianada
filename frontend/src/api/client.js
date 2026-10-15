@@ -45,6 +45,7 @@ export const api = {
   saveFiveGroupRotateBetConfig: (data) => req('POST', '/config/five-group-rotatebet', data),
   saveCustomRotateBetConfig: (data) => req('POST', '/config/custom-rotatebet', data),
   analyzeCustomRotateBet: (data) => req('POST', '/custom-rotatebet/analyze', data),
+  backtestCustomRotateBet: (data) => req('POST', '/custom-rotatebet/backtest', data),
   getCustomWinBetConfig: () => req('GET', '/config/custom-winbet'),
   saveCustomWinBetConfig: (data) => req('POST', '/config/custom-winbet', data),
   analyzeCustomWinBet: (data) => req('POST', '/custom-winbet/analyze', data),

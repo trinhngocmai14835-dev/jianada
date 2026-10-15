@@ -8,7 +8,10 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from core import db as core_db  # noqa: E402
 from main import app  # noqa: E402
-from services.custom_rotate_analysis_svc import analyze_custom_rotatebet_config  # noqa: E402
+from services.custom_rotate_analysis_svc import (  # noqa: E402
+    analyze_custom_rotatebet_config,
+    backtest_custom_rotatebet_config,
+)
 from services.draw_analysis_svc import sample_draw_records  # noqa: E402
 
 
@@ -130,3 +133,37 @@ def test_custom_rotate_analysis_api_prefers_latest_draw_snapshot(tmp_path):
         assert data["record_source"]["last_issue"] == snapshot["last_issue"]
     finally:
         core_db.DB_PATH = old_path
+
+
+def test_custom_rotate_backtest_returns_auditable_settlement_ledger():
+    config = {
+        **CONFIG,
+        "amount_steps": [10, 20],
+        "entry_miss_trigger": 1,
+        "enabled_positions": [True, False, False],
+        "number_sets": [
+            {"set_a": [1], "set_b": [1]},
+            {"set_a": [1], "set_b": [1]},
+            {"set_a": [1], "set_b": [1]},
+        ],
+        "odds": 10,
+        "rebate_rate": 0.01,
+    }
+    records = [
+        {"issue": "1000", "numbers": [1, 1, 1]},
+        {"issue": "1001", "numbers": [9, 9, 9]},
+        {"issue": "1002", "numbers": [9, 9, 9]},
+        {"issue": "1003", "numbers": [1, 1, 1]},
+    ]
+
+    result = backtest_custom_rotatebet_config(config, records=records)
+
+    assert result["ok"] is True
+    assert result["summary"]["bets"] == 2
+    assert result["summary"]["stake"] == 30
+    assert result["summary"]["payout"] == 200
+    assert result["summary"]["rebate"] == 0.3
+    assert result["summary"]["profit"] == 170.3
+    assert [row["result"] for row in result["ledger"]] == ["未中", "命中"]
+    assert [row["tier"] for row in result["ledger"]] == [1, 2]
+    assert result["ledger"][-1]["cumulative_profit"] == 170.3
