@@ -1,8 +1,8 @@
 {
-  "version": "2026.10.11.1",
-  "url": "https://pub-465f078b4f484662b30eb39d27ae5155.r2.dev/releases/jianada-2026.10.11.1.zip",
-  "sha256": "4850e2cf8083d234123012206a106fa75c5c2a408f126c49c455c9a31acf3646",
-  "size": 246085741,
-  "notes": "Custom rotate-loss number groups no longer have a 4/5-number limit; each A/B group accepts any non-empty set of valid numbers.",
+  "version": "2026.10.15.1",
+  "url": "https://pub-465f078b4f484662b30eb39d27ae5155.r2.dev/releases/jianada-2026.10.15.1.zip",
+  "sha256": "97fde68fbd42bd47f1e8c1eee81bf4774ce9db42be2816073dd8f8c42fb44595",
+  "size": 246091639,
+  "notes": "Added a standalone custom rotate-loss backtest calculator with an auditable per-period ledger and one-click draw-record browser capture.",
   "force": false
 }
