@@ -87,6 +87,7 @@ export default function CustomRotateBacktestPage() {
   const [capturePort, setCapturePort] = useState(9333)
   const [loading, setLoading] = useState(false)
   const [capturing, setCapturing] = useState(false)
+  const [openingBrowser, setOpeningBrowser] = useState(false)
   const [result, setResult] = useState(null)
 
   useEffect(() => {
@@ -135,6 +136,20 @@ export default function CustomRotateBacktestPage() {
       message.success(`${data.message || '抓取完成'}，已载入 ${data.records?.length || 0} 条记录`)
     } finally {
       setCapturing(false)
+    }
+  }
+
+  const openCaptureBrowser = async () => {
+    setOpeningBrowser(true)
+    try {
+      const data = await api.openDrawAnalysisBrowser(capturePort)
+      if (data?.ok === false) {
+        message.error(data.message || '打开浏览器失败')
+      } else {
+        message.success(data.message || `已打开 ${capturePort} 端口浏览器`)
+      }
+    } finally {
+      setOpeningBrowser(false)
     }
   }
 
@@ -198,11 +213,12 @@ export default function CustomRotateBacktestPage() {
               <Space direction="vertical" size={4}><Text type="secondary">记录上限</Text><InputNumber min={2} max={5000} value={recordLimit} onChange={(value) => setRecordLimit(value || 500)} /></Space>
             </Space>
             <Space wrap style={{ marginBottom: 12 }}>
+              <Button icon={<ChromeOutlined />} loading={openingBrowser} onClick={openCaptureBrowser}>打开抓取浏览器</Button>
               <Button icon={<ChromeOutlined />} loading={capturing} onClick={captureRecords}>从已登录浏览器抓取</Button>
               <Button icon={<DatabaseOutlined />} loading={loading} onClick={loadSavedRecords}>读取已保存记录</Button>
             </Space>
             <TextArea value={recordText} onChange={(event) => setRecordText(event.target.value)} autoSize={{ minRows: 14, maxRows: 28 }} placeholder="每行：期号 第一球 第二球 第三球" />
-            <Paragraph type="secondary" style={{ margin: '10px 0 0', fontSize: 12 }}>也可从“开奖记录分析推荐”先抓取并保存，再在这里读取。</Paragraph>
+            <Paragraph type="secondary" style={{ margin: '10px 0 0', fontSize: 12 }}>先点击“打开抓取浏览器”并登录、进入开奖结果页面，再点击抓取。也可从“开奖记录分析推荐”先抓取并保存，再在这里读取。</Paragraph>
           </Card>
 
           <Card title="回测规则" style={{ borderRadius: 8 }}>
