@@ -1,8 +1,8 @@
 {
-  "version": "2026.10.15.1",
-  "url": "https://pub-465f078b4f484662b30eb39d27ae5155.r2.dev/releases/jianada-2026.10.15.1.zip",
-  "sha256": "97fde68fbd42bd47f1e8c1eee81bf4774ce9db42be2816073dd8f8c42fb44595",
-  "size": 246091639,
-  "notes": "Added a standalone custom rotate-loss backtest calculator with an auditable per-period ledger and one-click draw-record browser capture.",
+  "version": "2026.10.16.1",
+  "url": "https://pub-465f078b4f484662b30eb39d27ae5155.r2.dev/releases/jianada-2026.10.16.1.zip",
+  "sha256": "5da74202eb9aa1369034960e626440929933464d6571ac5a3406a9172f5443d2",
+  "size": 246089687,
+  "notes": "The standalone custom rotate-loss backtest calculator now always shows editable A/B number inputs for all three balls.",
   "force": false
 }
