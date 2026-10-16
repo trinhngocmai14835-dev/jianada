@@ -81,7 +81,6 @@ function sourceText(source) {
 
 export default function CustomRotateBacktestPage() {
   const [form] = Form.useForm()
-  const numberSets = Form.useWatch('number_sets', form) || []
   const [recordText, setRecordText] = useState('')
   const [recordLimit, setRecordLimit] = useState(500)
   const [capturePort, setCapturePort] = useState(9333)
@@ -91,7 +90,12 @@ export default function CustomRotateBacktestPage() {
   const [result, setResult] = useState(null)
 
   useEffect(() => {
-    api.getCustomRotateBetConfig().then((config) => form.setFieldsValue(toForm(config)))
+    // The calculator must remain usable on its own.  Populate all three A/B
+    // groups immediately, then optionally replace them with the saved strategy.
+    form.setFieldsValue(toForm())
+    api.getCustomRotateBetConfig()
+      .then((config) => form.setFieldsValue(toForm(config)))
+      .catch(() => {})
   }, [form])
 
   const validateConfig = (config) => {
@@ -235,8 +239,8 @@ export default function CustomRotateBacktestPage() {
                   <Button icon={<PlusOutlined />} size="small" onClick={() => add(100)}>添加档位</Button>
                 </Space>}
               </Form.List>
-              {numberSets.map((_, index) => (
-                <Card key={index} size="small" title={BALLS[index]} style={{ marginBottom: 10 }} extra={<Form.Item name={['enabled_positions', index]} valuePropName="checked" noStyle><Switch checkedChildren="启用" unCheckedChildren="关闭" /></Form.Item>}>
+              {BALLS.map((ball, index) => (
+                <Card key={index} size="small" title={ball} style={{ marginBottom: 10 }} extra={<Form.Item name={['enabled_positions', index]} valuePropName="checked" noStyle><Switch checkedChildren="启用" unCheckedChildren="关闭" /></Form.Item>}>
                   <Row gutter={8}>
                     <Col span={12}><Form.Item label="A 组号码" name={['number_sets', index, 'set_a']} style={{ marginBottom: 0 }}><Input placeholder="0,1,3,5,8,9" /></Form.Item></Col>
                     <Col span={12}><Form.Item label="B 组号码" name={['number_sets', index, 'set_b']} style={{ marginBottom: 0 }}><Input placeholder="0,1,3,5,8,9" /></Form.Item></Col>
