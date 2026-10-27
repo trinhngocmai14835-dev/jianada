@@ -1,8 +1,8 @@
 {
-  "version": "2026.10.11.1",
-  "url": "https://pub-465f078b4f484662b30eb39d27ae5155.r2.dev/releases/jianada-2026.10.11.1.zip",
-  "sha256": "4850e2cf8083d234123012206a106fa75c5c2a408f126c49c455c9a31acf3646",
-  "size": 246085741,
-  "notes": "Custom rotate-loss number groups no longer have a 4/5-number limit; each A/B group accepts any non-empty set of valid numbers.",
+  "version": "2026.10.28.1",
+  "url": "https://pub-465f078b4f484662b30eb39d27ae5155.r2.dev/releases/jianada-2026.10.28.1.zip",
+  "sha256": "f4e54f58f8afca1cf47cb332e85d66efbd20c1e196595493693f9480e4fad987",
+  "size": 246088067,
+  "notes": "新增线上授权刷新：后台续期并同步 R2 后，客户重新打开软件即可自动更新到期时间；仅接受机器绑定且签名有效的更晚授权码。",
   "force": false
 }
