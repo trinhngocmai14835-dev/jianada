@@ -53,10 +53,14 @@ https://pub-465f078b4f484662b30eb39d27ae5155.r2.dev/account-whitelist/ADMINTEST0
 ```
 ## Customer renewal flow
 
-The desktop app uses an offline signed license code. Editing the expiry date in
-this admin portal is not enough by itself: after changing or extending the
-expiry, generate a new license code and send it to the customer so they can
-activate it in the desktop app.
+The desktop app uses an offline signed license code.  When this Worker and a
+desktop client that supports online renewal are both deployed, generating a new
+license also publishes the machine-bound signed code to R2.  The client checks
+that record at startup, verifies the signature locally, and adopts it only when
+it extends the local expiry.  The customer then only needs to restart the app.
+
+Older desktop clients do not have this online-refresh behavior.  For those
+clients, send the generated code to the customer for manual activation.
 
 Recommended steps:
 
@@ -64,7 +68,8 @@ Recommended steps:
 2. Select the customer and the bound machine ID.
 3. Use `延长 7 天`, `延长 30 天`, `延长 90 天`, or fill `延期天数` and click
    `按填写天数延期并生成授权码`.
-4. Click `复制授权码` and send the code to the customer.
+4. For an online-renewal client, ask the customer to close and reopen the app.
+   For an older client, click `复制授权码` and send the code for manual activation.
 5. The license generation buttons also save the current whitelist accounts and
    sync the whitelist JSON to R2. Use `保存机器码` only when you want to change
    whitelist accounts without generating a new license code.
@@ -102,6 +107,8 @@ The R2 record produced by this portal matches the current desktop client:
   "enabled": true,
   "accounts": ["ccff11", "ccff22"],
   "remark": "customer note",
+  "license_key": "machine-bound signed license code",
+  "license_expiry": "YYYYMMDD",
   "updated_at": "2026-08-17T00:00:00.000Z"
 }
 ```

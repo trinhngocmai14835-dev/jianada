@@ -44,7 +44,11 @@ from services.main_trend_bet_svc import (
     get_account_statuses as main_trend_bet_account_statuses,
     stop_account as stop_main_trend_bet_account,
 )
-from services.account_whitelist import get_account_whitelist_status, check_accounts_allowed
+from services.account_whitelist import (
+    get_account_whitelist_status,
+    check_accounts_allowed,
+    refresh_license_from_remote,
+)
 from services.updater import check_for_update, get_update_install_status, start_update_install
 from services.draw_analysis_svc import analyze_draw_payload, analyze_draws, sample_draw_records, sample_draw_text
 from services.draw_capture_svc import capture_draw_records_from_chrome
@@ -232,11 +236,27 @@ DEFAULT_FOLLOWBET = {
 @router.get("/license")
 def get_license_status():
     mid = get_machine_id()
+    # 每次客户端启动加载授权页时，尝试从 R2 获取更晚的、验签通过的授权码。
+    # 失败时保留本机已有授权，不会因为网络波动而把客户踢下线。
+    refresh = refresh_license_from_remote()
     lic = get_license()
     if not lic:
-        return {"valid": False, "message": "未激活", "machine_id": mid, "expiry": ""}
+        return {
+            "valid": False,
+            "message": "未激活",
+            "machine_id": mid,
+            "expiry": "",
+            "refresh_message": refresh.get("message", ""),
+        }
     valid, msg, expiry = validate_license(lic["key"])
-    return {"valid": valid, "message": msg, "machine_id": mid, "expiry": expiry}
+    return {
+        "valid": valid,
+        "message": msg,
+        "machine_id": mid,
+        "expiry": expiry,
+        "refreshed": bool(refresh.get("updated")),
+        "refresh_message": refresh.get("message", ""),
+    }
 
 
 class ActivateRequest(BaseModel):

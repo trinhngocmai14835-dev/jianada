@@ -11,8 +11,8 @@ import urllib.error
 import urllib.request
 from datetime import datetime
 
-from core.db import get_config, set_config
-from core.license import get_machine_id
+from core.db import get_config, set_config, get_license, save_license
+from core.license import get_machine_id, validate_license
 
 try:
     import certifi
@@ -116,6 +116,10 @@ def _fetch_remote_status(machine_id: str) -> dict:
         "source": "remote",
         "message": str(data.get("message") or "ok"),
         "updated_at": str(data.get("updated_at") or ""),
+        # 授权码本身带 RSA 签名，并且只能在对应机器码上验证通过。
+        # 只有校验成功且日期更晚时，客户端才会采用它。
+        "license_key": str(data.get("license_key") or "").strip(),
+        "license_expiry": str(data.get("license_expiry") or ""),
         "fetched_at": datetime.now().isoformat(timespec="seconds"),
     }
 
@@ -155,8 +159,41 @@ def get_account_whitelist_status() -> dict:
             "source": "none",
             "message": f"联网白名单获取失败：{exc}",
             "updated_at": "",
+            "license_key": "",
+            "license_expiry": "",
             "fetched_at": "",
         }
+
+
+def refresh_license_from_remote() -> dict:
+    """Refresh a local license from R2 when a newer, valid signed code exists.
+
+    Network or R2 failures never invalidate a previously activated local code.
+    A public R2 object is not trusted by itself: ``validate_license`` verifies
+    the RSA signature and machine binding before anything is written locally.
+    """
+    status = get_account_whitelist_status()
+    key = str(status.get("license_key") or "").strip()
+    if not key:
+        return {"updated": False, "message": "远程未提供新授权码", "status": status}
+
+    valid, message, remote_expiry = validate_license(key)
+    if not valid:
+        return {"updated": False, "message": f"远程授权码未采用：{message}", "status": status}
+
+    local = get_license()
+    local_expiry = str((local or {}).get("expiry") or "")
+    # 日期是 YYYYMMDD 格式，可安全地按字符串比较；绝不降级为更早的码。
+    if local_expiry and remote_expiry <= local_expiry:
+        return {"updated": False, "message": "本机授权已是相同或更晚日期", "status": status}
+
+    save_license(key, remote_expiry)
+    return {
+        "updated": True,
+        "message": f"已从远程同步授权，到期 {remote_expiry}",
+        "expiry": remote_expiry,
+        "status": status,
+    }
 
 
 def check_accounts_allowed(accounts) -> tuple:

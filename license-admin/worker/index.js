@@ -602,6 +602,10 @@ function whitelistRecord(machine, updatedAt = nowIso()) {
     enabled: machine.enabled !== false,
     accounts: cleanAccounts(machine.accounts || []),
     remark: cleanText(machine.remark),
+    // The code is RSA-signed and machine-bound.  Desktop clients verify it
+    // before saving, so a public object cannot grant another machine access.
+    license_key: String(machine.last_license_key || ""),
+    license_expiry: String(machine.expiry || ""),
     updated_at: updatedAt,
   };
 }
