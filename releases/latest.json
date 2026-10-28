@@ -1,8 +1,8 @@
 {
-  "version": "2026.10.28.1",
-  "url": "https://pub-465f078b4f484662b30eb39d27ae5155.r2.dev/releases/jianada-2026.10.28.1.zip",
-  "sha256": "f4e54f58f8afca1cf47cb332e85d66efbd20c1e196595493693f9480e4fad987",
-  "size": 246088067,
-  "notes": "新增线上授权刷新：后台续期并同步 R2 后，客户重新打开软件即可自动更新到期时间；仅接受机器绑定且签名有效的更晚授权码。",
+  "version": "2026.10.28.2",
+  "url": "https://pub-465f078b4f484662b30eb39d27ae5155.r2.dev/releases/jianada-2026.10.28.2.zip",
+  "sha256": "8142ed28415fde12a53bf610c1d725e22dc080db6518243a1aea0c961ce2882d",
+  "size": 246110596,
+  "notes": "新增双色颜色轮换追损：三球独立按最近两种不同颜色加0组成7码，独立追损，中奖或末阶未中回第一阶。",
   "force": false
 }
