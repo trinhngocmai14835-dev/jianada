@@ -13,6 +13,7 @@ const MODE_LABEL = {
   rotatebet: '轮换追损',
   custom_rotatebet: '自定义金额轮换追损',
   random_rotatebet: '随机码追损',
+  color_rotatebet: '双色颜色轮换追损',
   five_group_rotatebet: '私定五码组三球追损',
   custom_winbet: '自定义金额轮换赢冲',
   four_code_winbet: '4粒码赢冲输缩',

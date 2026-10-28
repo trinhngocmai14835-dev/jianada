@@ -21,6 +21,11 @@ from services.random_rotate_bet_svc import (
     get_account_statuses as random_rotatebet_account_statuses,
     stop_account as stop_random_rotatebet_account,
 )
+from services.color_rotate_bet_svc import (
+    run as color_rotate_bet_run,
+    get_account_statuses as color_rotatebet_account_statuses,
+    stop_account as stop_color_rotatebet_account,
+)
 from services.five_group_rotate_bet_svc import (
     run as five_group_rotate_bet_run,
     get_account_statuses as five_group_rotatebet_account_statuses,
@@ -61,6 +66,7 @@ TASK_LABELS = {
     "rotatebet": "轮换追损",
     "custom_rotatebet": "自定义金额轮换追损",
     "random_rotatebet": "随机码追损",
+    "color_rotatebet": "双色颜色轮换追损",
     "five_group_rotatebet": "私定五码组三球追损",
     "custom_winbet": "自定义金额轮换赢冲",
     "four_code_winbet": "4粒码赢冲输缩",
@@ -161,6 +167,14 @@ DEFAULT_RANDOM_ROTATEBET = {
     **DEFAULT_CUSTOM_ROTATEBET,
     "random_counts": [5, 5, 5],
     "entry_miss_trigger": 0,
+    "start_mode": "now",
+    "start_time": "09:00",
+}
+DEFAULT_COLOR_ROTATEBET = {
+    **DEFAULT_CUSTOM_ROTATEBET,
+    "amount_steps": [100, 130, 299, 389, 506],
+    "entry_miss_trigger": 0,
+    "enabled_positions": [True, True, True],
     "start_mode": "now",
     "start_time": "09:00",
 }
@@ -432,6 +446,20 @@ def save_random_rotatebet_config(data: dict):
     set_config("random_rotatebet_config", existing)
     return {"ok": True}
 
+
+@router.get("/config/color-rotatebet")
+def get_color_rotatebet_config():
+    return _normalize_start_config({**DEFAULT_COLOR_ROTATEBET, **get_config("color_rotatebet_config", {})}, DEFAULT_COLOR_ROTATEBET["start_time"])
+
+
+@router.post("/config/color-rotatebet")
+def save_color_rotatebet_config(data: dict):
+    existing = get_config("color_rotatebet_config", DEFAULT_COLOR_ROTATEBET)
+    existing.update(data)
+    existing = _normalize_start_config(existing, DEFAULT_COLOR_ROTATEBET["start_time"])
+    set_config("color_rotatebet_config", existing)
+    return {"ok": True}
+
 @router.get("/config/five-group-rotatebet")
 def get_five_group_rotatebet_config():
     return _normalize_start_config({**DEFAULT_FIVE_GROUP_ROTATEBET, **get_config("five_group_rotatebet_config", {})}, DEFAULT_FIVE_GROUP_ROTATEBET["start_time"])
@@ -639,6 +667,36 @@ def random_rotatebet_account_status():
 @router.post("/random-rotatebet/accounts/stop")
 def stop_random_rotatebet_account_route(req: StopCustomRotateBetAccountRequest):
     ok, msg = stop_random_rotatebet_account(req.key)
+    return {"ok": ok, "message": msg}
+
+
+@router.post("/color-rotatebet/start")
+def start_color_rotatebet():
+    ok, msg = _check_license()
+    if not ok:
+        return {"ok": False, "message": msg}
+    cfg = _normalize_start_config({**DEFAULT_COLOR_ROTATEBET, **get_config("color_rotatebet_config", {})}, DEFAULT_COLOR_ROTATEBET["start_time"])
+    ok, msg = _check_account_whitelist("color_rotatebet", cfg)
+    if not ok:
+        return {"ok": False, "message": msg}
+    ok, msg = TaskManager.get().start("color_rotatebet", color_rotate_bet_run, cfg)
+    return {"ok": ok, "message": msg}
+
+
+@router.post("/color-rotatebet/stop")
+def stop_color_rotatebet():
+    ok, msg = TaskManager.get().stop("color_rotatebet")
+    return {"ok": ok, "message": msg}
+
+
+@router.get("/color-rotatebet/accounts/status")
+def color_rotatebet_account_status():
+    return {"accounts": color_rotatebet_account_statuses()}
+
+
+@router.post("/color-rotatebet/accounts/stop")
+def stop_color_rotatebet_account_route(req: StopCustomRotateBetAccountRequest):
+    ok, msg = stop_color_rotatebet_account(req.key)
     return {"ok": ok, "message": msg}
 @router.post("/five-group-rotatebet/start")
 def start_five_group_rotatebet():
