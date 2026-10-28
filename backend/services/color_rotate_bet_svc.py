@@ -17,7 +17,7 @@ from datetime import datetime
 
 from playwright.sync_api import sync_playwright
 
-from core.db import get_config, get_draw_records
+from core.db import get_config
 from services.auto_bet_svc import (
     _free_port,
     _get_balance,
@@ -73,6 +73,8 @@ class _ColourHistory:
 
     def add(self, number: int):
         colour = _colour_of(number)
+        # 0 is neutral.  It is already included in every target, but must not
+        # become one of the two history colours or break the backwards search.
         if colour:
             self.values.insert(0, colour)
             del self.values[80:]
@@ -92,17 +94,6 @@ class _ColourHistory:
         return [0, *COLOUR_NUMBERS[pair[0]], *COLOUR_NUMBERS[pair[1]]]
 
 
-def _seed_colour_histories() -> list[_ColourHistory]:
-    """Seed from saved records (newest first), if the user captured them."""
-    histories = [_ColourHistory() for _ in range(NUM_POSITIONS)]
-    # DB returns newest first; feed oldest-to-newest because add() prepends.
-    for record in reversed(get_draw_records(limit=1000)):
-        numbers = record.get("numbers", []) if isinstance(record, dict) else []
-        for index in range(min(NUM_POSITIONS, len(numbers))):
-            histories[index].add(numbers[index])
-    return histories
-
-
 def _targets_from_histories(histories: list[_ColourHistory]) -> list[list[int]]:
     return [history.numbers() for history in histories]
 
@@ -110,6 +101,26 @@ def _targets_from_histories(histories: list[_ColourHistory]) -> list[list[int]]:
 def _remember_draw(histories: list[_ColourHistory], draw: list[int]):
     for index in range(min(NUM_POSITIONS, len(draw))):
         histories[index].add(draw[index])
+
+
+def _observation_summary(histories: list[_ColourHistory], enabled_positions: list[bool]) -> str:
+    """Human-readable startup observation state for the live log."""
+    items = []
+    for index in range(NUM_POSITIONS):
+        if not enabled_positions[index]:
+            continue
+        values = histories[index].values[:4]
+        pair = histories[index].pair()
+        if pair:
+            items.append(
+                f"球{index + 1}已收集{pair[0]}/{pair[1]}两色，下一期可投注"
+            )
+        elif values:
+            items.append(f"球{index + 1}仅观察到{values[0]}色，继续观察")
+        else:
+            items.append(f"球{index + 1}尚未观察到非0颜色，继续观察")
+    return " | ".join(items)
+
 
 _STATUS_LOCK = threading.Lock()
 _ACCOUNT_STATUS: dict[str, dict] = {}
@@ -430,10 +441,11 @@ def _betting_loop(page, account, cfg, stop_event, log):
     draw_delay = int(cfg.get("draw_delay", 73))
     settle_early = max(0, int(cfg.get("settlement_wake_early", 8)))
 
-    # This strategy has no entry-miss gate: as soon as a ball has two
-    # different colours it starts (or continues) at its own current tier.
+    # A new run starts with live observation only.  Do not seed from saved
+    # records: otherwise it can place a bet immediately without showing the
+    # user the two colours that opened the strategy.
     paths = [_CustomAmountPathState(amount_steps, 0) for _ in range(NUM_POSITIONS)]
-    histories = _seed_colour_histories()
+    histories = [_ColourHistory() for _ in range(NUM_POSITIONS)]
     if not any(enabled_positions):
         log(f"[{account}] 错误：至少需要启用一路球，当前三路都已关闭")
         return
@@ -460,12 +472,14 @@ def _betting_loop(page, account, cfg, stop_event, log):
         for i in range(NUM_POSITIONS)
     )
     log(f"[{account}] 双色颜色轮换追损启动 | 阶梯金额={amount_steps}（每个号码） | {sets_desc} | 起始余额={start_balance}")
+    log(
+        f"[{account}] 启动观察模式 | 不使用历史开奖记录；首期新开奖仅记录颜色、不下注。"
+        "每球独立收集两种不同的非0颜色；出现0会继续往前找颜色，凑齐后下一期才实投"
+    )
     if last_issue:
-        log(f"[{account}] 结算锚点初始化：当前已开奖期号 {last_issue}")
+        log(f"[{account}] 结算锚点初始化：当前已开奖期号 {last_issue}，下一期新开奖开始观察")
     else:
         log(f"[{account}] 警告：暂未稳定读到初始开奖期号，首次下注前会再次确认")
-    if initial_draw:
-        _remember_draw(histories, initial_draw[1])
 
     while not stop_event.is_set():
         bal = _get_balance(page)
@@ -523,8 +537,12 @@ def _betting_loop(page, account, cfg, stop_event, log):
                     pending_issue = None
                     last_issue = issue
             elif issue != last_issue:
-                log(f"[{account}] 观察到新开奖 | 期号={issue} 开奖={draw} | 当前利润={profit:+.0f}")
                 _remember_draw(histories, draw)
+                observation = _observation_summary(histories, enabled_positions)
+                log(
+                    f"[{account}] 入场观察 | 期号={issue} 开奖={draw} | {observation} "
+                    f"| 当前利润={profit:+.0f} | 本期只更新观察记录"
+                )
                 last_issue = issue
 
         cd = _get_countdown(page)
