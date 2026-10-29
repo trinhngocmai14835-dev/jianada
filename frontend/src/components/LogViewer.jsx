@@ -31,13 +31,12 @@ export default function LogViewer({ taskId, running }) {
       } catch (_) {}
     }
 
-    if (!running) {
-      timerRef.current = setTimeout(poll, 1000)
-      return () => clearTimeout(timerRef.current)
-    }
-
     poll()
-    timerRef.current = setInterval(poll, 2000)
+    // A task can fail or finish before the status refresh marks it as
+    // "running".  Keep polling even while stopped so its startup/error logs
+    // are not lost (the previous one-shot poll could run before those logs
+    // had reached the backend buffer).
+    timerRef.current = setInterval(poll, running ? 2000 : 3000)
     return () => clearInterval(timerRef.current)
   }, [taskId, running])
 

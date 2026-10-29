@@ -10,6 +10,7 @@ from services.color_rotate_bet_svc import (
     _remember_draw,
     _targets_from_histories,
 )
+from api.ws import _TASK_IDS
 
 
 def check(condition, message):
@@ -66,7 +67,11 @@ def test_each_ball_tier_resets_after_win_or_final_loss():
     check(path.get_bet() == 99, "win resets to first tier")
 
 
+def test_colour_strategy_is_registered_for_live_logs():
+    check("color_rotatebet" in _TASK_IDS, "colour strategy must be registered with the live log relay")
+
+
 if __name__ == "__main__":
-    for fn in (test_skips_repeated_colour_and_adds_zero, test_waits_until_two_distinct_colours, test_zero_keeps_searching_back_for_two_colours, test_fresh_run_observes_before_any_bet, test_each_ball_tier_resets_after_win_or_final_loss):
+    for fn in (test_skips_repeated_colour_and_adds_zero, test_waits_until_two_distinct_colours, test_zero_keeps_searching_back_for_two_colours, test_fresh_run_observes_before_any_bet, test_each_ball_tier_resets_after_win_or_final_loss, test_colour_strategy_is_registered_for_live_logs):
         fn()
     print("color rotate tests passed")
