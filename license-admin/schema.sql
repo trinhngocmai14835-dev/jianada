@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS machines (
   expiry TEXT NOT NULL DEFAULT '',
   enabled INTEGER NOT NULL DEFAULT 1,
   accounts_json TEXT NOT NULL DEFAULT '[]',
+  bindings_json TEXT NOT NULL DEFAULT '[]',
   remark TEXT NOT NULL DEFAULT '',
   last_license_key TEXT NOT NULL DEFAULT '',
   last_synced_at TEXT NOT NULL DEFAULT '',

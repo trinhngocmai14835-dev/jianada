@@ -24,6 +24,10 @@ ACCOUNT_WHITELIST_BASE_URL = os.getenv(
     "ACCOUNT_WHITELIST_BASE_URL",
     "https://pub-465f078b4f484662b30eb39d27ae5155.r2.dev/account-whitelist",
 )
+ACCOUNT_BINDING_VERIFY_URL = os.getenv(
+    "ACCOUNT_BINDING_VERIFY_URL",
+    "https://jianada-license-admin.soft-api-7mskfl.workers.dev/api/client/account-binding-check",
+)
 CACHE_KEY = "account_whitelist_cache"
 HTTP_TIMEOUT = 8
 
@@ -120,6 +124,10 @@ def _fetch_remote_status(machine_id: str) -> dict:
         # 只有校验成功且日期更晚时，客户端才会采用它。
         "license_key": str(data.get("license_key") or "").strip(),
         "license_expiry": str(data.get("license_expiry") or ""),
+        # The public R2 record deliberately exposes only this boolean and the
+        # account names.  Safety-code verifiers remain in D1 and are checked
+        # by the Worker over HTTPS, never published to R2.
+        "safe_code_binding_required": data.get("safe_code_binding_required") is True,
         "fetched_at": datetime.now().isoformat(timespec="seconds"),
     }
 
@@ -134,6 +142,7 @@ def _cached_status(machine_id: str):
         return None
     cached = dict(cached)
     cached["accounts"] = _clean_accounts(cached.get("accounts") or [])
+    cached["safe_code_binding_required"] = cached.get("safe_code_binding_required") is True
     cached["source"] = "cache"
     return cached
 
@@ -161,6 +170,7 @@ def get_account_whitelist_status() -> dict:
             "updated_at": "",
             "license_key": "",
             "license_expiry": "",
+            "safe_code_binding_required": False,
             "fetched_at": "",
         }
 
@@ -196,7 +206,48 @@ def refresh_license_from_remote() -> dict:
     }
 
 
-def check_accounts_allowed(accounts) -> tuple:
+def _verify_account_safe_code(machine_id: str, account: str, safe_code: str) -> tuple:
+    """Ask the private Worker whether this account may use this safety code.
+
+    Safety-code hashes are intentionally *not* put in public R2 JSON.  The
+    Worker holds salted verifiers in D1 and returns only allow/deny.
+    """
+    if not ACCOUNT_BINDING_VERIFY_URL:
+        return False, "安全码授权校验地址未配置"
+    payload = json.dumps({
+        "machine_id": machine_id,
+        "account": normalize_account(account),
+        "safe_code": str(safe_code or "").strip(),
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        ACCOUNT_BINDING_VERIFY_URL,
+        data=payload,
+        headers={
+            "content-type": "application/json",
+            "accept": "application/json",
+            "user-agent": "autobet-pro/1.0",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT, context=_ssl_context()) as res:
+            data = json.loads(res.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        try:
+            data = json.loads(exc.read().decode("utf-8"))
+            message = str(data.get("message") or "安全码在线校验失败")
+        except Exception:
+            message = f"安全码在线校验失败（HTTP {exc.code}）"
+        return False, message
+    except Exception as exc:
+        return False, f"安全码在线校验失败：{exc}"
+
+    if data.get("ok") is True and data.get("allowed") is True:
+        return True, "安全码绑定校验通过"
+    return False, str(data.get("message") or "会员账号与安全码不匹配")
+
+
+def check_accounts_allowed(accounts, safe_code: str = "") -> tuple:
     status = get_account_whitelist_status()
     if not status.get("ok"):
         return False, status.get("message") or "账号白名单检查失败", status
@@ -215,5 +266,16 @@ def check_accounts_allowed(accounts) -> tuple:
     if missing:
         return False, "以下账号未授权：" + ", ".join(sorted(set(missing))), status
 
+    if status.get("safe_code_binding_required") is True:
+        if not str(safe_code or "").strip():
+            return False, "该账号已启用安全码绑定，请填写管理员指定的安全码", status
+        # This is intentionally fail-closed.  Using an old cached allow-list
+        # would let a remotely disabled account keep running during an outage.
+        for account in configured:
+            verified, verify_msg = _verify_account_safe_code(status["machine_id"], account, safe_code)
+            if not verified:
+                return False, verify_msg, status
+
     source = "远程" if status.get("source") == "remote" else "缓存"
-    return True, f"账号白名单检查通过（{source}）", status
+    suffix = "，安全码绑定校验通过" if status.get("safe_code_binding_required") is True else ""
+    return True, f"账号白名单检查通过（{source}）{suffix}", status

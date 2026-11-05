@@ -18,6 +18,8 @@ account-whitelist/<machine_id>.json
   `tools/gen_license.py`.
 - D1 tables for customers, machines, and generated license events.
 - R2 whitelist publishing with the existing JSON shape.
+- Optional account-to-safety-code binding. The verifier is stored only in D1;
+  public R2 JSON exposes no safety code or hash.
 - Static admin UI in `web/` with a demo mode for local preview.
 
 ## Local preview
@@ -77,6 +79,21 @@ Recommended steps:
 The `按到期日生成授权码` button now uses the date currently shown in the card, so
 an unsaved expiry date will not accidentally generate a code for the old stored
 date.
+
+## Account safety-code binding
+
+For a new protected customer, keep the regular account allow-list, then enter
+one line per account in `新增或替换安全码绑定`:
+
+```text
+member-account | fixed-safety-code
+```
+
+Save the machine record (or generate a license) to publish the `binding
+required` flag to R2. New desktop clients then contact the Worker at task start
+and are allowed only when the account and safety code match. The Worker stores
+only a salted PBKDF2 verifier in D1; the safety code is not returned to the
+admin page after saving and is never placed in public R2 JSON.
 
 ## Cloudflare setup outline
 

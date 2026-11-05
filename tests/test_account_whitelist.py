@@ -99,6 +99,35 @@ def test_missing_r2_object_is_empty_whitelist():
         aw.urllib.request.urlopen = original_urlopen
 
 
+def test_safe_code_binding_is_checked_online_and_fails_closed():
+    print("[4] safety-code binding")
+    p = Patch()
+    calls = []
+    try:
+        with_store(p)
+        p.set("_fetch_remote_status", lambda mid: {
+            "ok": True,
+            "machine_id": mid,
+            "enabled": True,
+            "accounts": ["bound-user"],
+            "safe_code_binding_required": True,
+            "source": "remote",
+        })
+        p.set("_verify_account_safe_code", lambda mid, account, code: (calls.append((mid, account, code)) or (code == "fixed-code", "bad code")))
+
+        ok, msg, _ = aw.check_accounts_allowed(["bound-user"], "fixed-code")
+        check(ok is True, "matching safety code passes")
+        check(calls == [("ABCDEF1234567890", "bound-user", "fixed-code")], "verification uses machine, account, and code")
+
+        ok, msg, _ = aw.check_accounts_allowed(["bound-user"], "wrong-code")
+        check(ok is False and "bad code" in msg, "wrong safety code is blocked")
+
+        ok, msg, _ = aw.check_accounts_allowed(["bound-user"], "")
+        check(ok is False and "安全码" in msg, "missing safety code is blocked")
+    finally:
+        p.restore()
+
+
 def main():
     print("=" * 56)
     print("account whitelist tests")
@@ -106,6 +135,7 @@ def main():
     test_remote_allows_and_blocks()
     test_cache_fallback_and_no_cache_block()
     test_missing_r2_object_is_empty_whitelist()
+    test_safe_code_binding_is_checked_online_and_fails_closed()
     print("=" * 56)
     print("ALL OK")
 

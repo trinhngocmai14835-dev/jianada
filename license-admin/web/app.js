@@ -26,6 +26,7 @@ const demoCustomers = [
         expiry: "20260916",
         enabled: true,
         accounts: ["ccff11", "ccff22", "ccff33"],
+        binding_accounts: [],
         remark: "当前电脑机器码示例",
         last_synced_at: "2026-08-08T20:27:02+00:00",
       },
@@ -179,18 +180,44 @@ function machineFormFromTarget(target) {
 }
 
 function machineFormPayload(form) {
-  return {
+  const bindingsText = form?.elements?.bindings?.value || "";
+  const clearBindings = !!form?.elements?.clear_bindings?.checked;
+  const payload = {
     expiry: compactExpiry(form?.elements?.expiry?.value),
     enabled: form?.elements?.enabled?.value === "true",
     accounts: splitAccounts(form?.elements?.accounts?.value),
     remark: form?.elements?.remark?.value || "",
   };
+  if (clearBindings) {
+    payload.bindings = [];
+  } else if (String(bindingsText).trim()) {
+    payload.bindings = splitBindings(bindingsText);
+  }
+  return payload;
 }
 function splitAccounts(value) {
   return String(value || "")
     .split(/[\s,，]+/)
     .map((x) => x.trim().toLowerCase())
     .filter(Boolean);
+}
+
+function splitBindings(value) {
+  const bindings = [];
+  for (const [index, line] of String(value || "").split(/\r?\n/).entries()) {
+    const raw = line.trim();
+    if (!raw) continue;
+    const separator = raw.indexOf("|");
+    if (separator < 1 || !raw.slice(separator + 1).trim()) {
+      throw new Error(`第 ${index + 1} 行格式不对，应为：会员账号 | 固定安全码`);
+    }
+    bindings.push({
+      account: raw.slice(0, separator).trim().toLowerCase(),
+      safe_code: raw.slice(separator + 1).trim(),
+    });
+  }
+  if (!bindings.length) throw new Error("请至少填写一条账号与安全码绑定");
+  return bindings;
 }
 
 function render() {
@@ -324,6 +351,7 @@ function renderCustomerDetail(customer) {
 
 function renderMachineCard(machine) {
   const accountsText = (machine.accounts || []).join(" ");
+  const boundAccounts = (machine.binding_accounts || []).join("、") || "未启用";
   const dateValue = /^\d{8}$/.test(machine.expiry || "")
     ? `${machine.expiry.slice(0, 4)}-${machine.expiry.slice(4, 6)}-${machine.expiry.slice(6, 8)}`
     : "";
@@ -332,7 +360,7 @@ function renderMachineCard(machine) {
       <div class="machine-top">
         <div>
           <strong>${escapeHtml(machine.machine_id)}</strong>
-          <div class="muted small">到期 ${expiryDisplay(machine.expiry)} · ${machine.accounts?.length || 0} 个账号</div>
+          <div class="muted small">到期 ${expiryDisplay(machine.expiry)} · ${machine.accounts?.length || 0} 个账号 · 安全码绑定：${escapeHtml(boundAccounts)}</div>
         </div>
         <span class="tag ${machine.enabled ? "ok" : "off"}">${machine.enabled ? "启用" : "停用"}</span>
       </div>
@@ -356,6 +384,9 @@ function renderMachineCard(machine) {
           </div>
         </div>
         <label class="full">白名单账号<textarea name="accounts" placeholder="多个账号用空格分开">${escapeHtml(accountsText)}</textarea></label>
+        <label class="full">新增或替换安全码绑定<textarea name="bindings" placeholder="每行：会员账号 | 固定安全码&#10;例如：hzhly5668 | abc123"></textarea></label>
+        <div class="muted small full">安全码不会回显或写入公开 R2；保存时只会传给 Worker 生成不可逆校验值。留空表示保留现有绑定。</div>
+        <label class="full muted small"><input name="clear_bindings" type="checkbox"> 清除全部安全码绑定（清除后，新版客户端不再限制安全码）</label>
         <label class="full">备注<input name="remark" value="${escapeAttr(machine.remark || "")}"></label>
         <div class="actions full">
           <button class="btn primary" type="submit">保存机器码</button>
@@ -403,7 +434,13 @@ document.addEventListener("submit", async (event) => {
 
   if (event.target.classList.contains("machine-form")) {
     const machineId = event.target.dataset.machine;
-    const payload = machineFormPayload(event.target);
+    let payload;
+    try {
+      payload = machineFormPayload(event.target);
+    } catch (error) {
+      setMessage(error.message);
+      return;
+    }
     if (state.demo) {
       const machine = selectedCustomer().machines.find((m) => m.machine_id === machineId);
       Object.assign(machine, payload);
@@ -491,7 +528,13 @@ document.addEventListener("click", async (event) => {
   if (action === "license") {
     const machineId = target.dataset.machine;
     const form = machineFormFromTarget(target);
-    const payload = machineFormPayload(form);
+    let payload;
+    try {
+      payload = machineFormPayload(form);
+    } catch (error) {
+      setMessage(error.message);
+      return;
+    }
     if (!payload.expiry) {
       setMessage("请先选择到期日期，再生成授权码");
       return;
@@ -533,13 +576,21 @@ document.addEventListener("click", async (event) => {
       return;
     }
 
+    let formPayload;
+    try {
+      formPayload = machineFormPayload(form);
+    } catch (error) {
+      setMessage(error.message);
+      return;
+    }
+
     const nextDate = addDays(extensionBaseDate(form.elements.expiry?.value), days);
     form.elements.expiry.value = formatDateInput(nextDate);
     const expiry = compactExpiry(form.elements.expiry.value);
 
     if (state.demo) {
       const machine = selectedCustomer().machines.find((m) => m.machine_id === machineId);
-      Object.assign(machine, { ...machineFormPayload(form), expiry });
+      Object.assign(machine, { ...formPayload, expiry });
       state.generatedLicense = `${expiry}.DEMO_SIGNATURE_ONLY_CONFIGURE_CLOUDFLARE_SECRET_FOR_REAL_SIGNING`;
       setMessage(`演示模式：已延期 ${days} 天，到期 ${expiryDisplay(expiry)}`);
       render();
@@ -549,7 +600,7 @@ document.addEventListener("click", async (event) => {
     try {
       const data = await api(`/api/machines/${machineId}/license`, {
         method: "POST",
-        body: JSON.stringify({ ...machineFormPayload(form), expiry, days }),
+        body: JSON.stringify({ ...formPayload, expiry, days }),
       });
       state.generatedLicense = data.license_key;
       await loadCustomers();

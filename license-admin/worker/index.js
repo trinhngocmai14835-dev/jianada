@@ -25,6 +25,7 @@ const SCHEMA_STATEMENTS = [
     expiry TEXT NOT NULL DEFAULT '',
     enabled INTEGER NOT NULL DEFAULT 1,
     accounts_json TEXT NOT NULL DEFAULT '[]',
+    bindings_json TEXT NOT NULL DEFAULT '[]',
     remark TEXT NOT NULL DEFAULT '',
     last_license_key TEXT NOT NULL DEFAULT '',
     last_synced_at TEXT NOT NULL DEFAULT '',
@@ -83,6 +84,12 @@ async function handleApi(request, env, url) {
   if (route === "POST /api/login") return login(request, env);
   if (route === "POST /api/logout") return logout(env);
   if (route === "GET /api/session") return session(request, env);
+  // Public client verification endpoint. It returns only allow/deny; safety
+  // codes and their salted verifiers never appear in public R2 JSON.
+  if (route === "POST /api/client/account-binding-check") {
+    await initDb(env);
+    return verifyAccountBinding(request, env);
+  }
 
   const auth = await requireAuth(request, env);
   if (!auth.ok) return auth.response;
@@ -131,6 +138,19 @@ async function handleApi(request, env, url) {
 async function initDb(env) {
   if (!env.DB) throw new Error("D1 binding DB is not configured");
   await env.DB.batch(SCHEMA_STATEMENTS.map((sql) => env.DB.prepare(sql)));
+  // Existing production databases predate bindings_json.  Use a small,
+  // idempotent migration so deploying this Worker does not require a manual
+  // D1 command before the admin portal can be used.
+  const columns = await env.DB.prepare("PRAGMA table_info(machines)").all();
+  const names = new Set((columns.results || []).map((column) => column.name));
+  if (!names.has("bindings_json")) {
+    try {
+      await env.DB.prepare("ALTER TABLE machines ADD COLUMN bindings_json TEXT NOT NULL DEFAULT '[]'").run();
+    } catch (error) {
+      // A concurrent first request may have completed the same migration.
+      if (!/duplicate column name/i.test(String(error?.message || error))) throw error;
+    }
+  }
 }
 
 async function login(request, env) {
@@ -196,7 +216,7 @@ async function listCustomers(env) {
      ORDER BY updated_at DESC`,
   ).all();
   const machines = await env.DB.prepare(
-    `SELECT id, customer_id, machine_id, expiry, enabled, accounts_json, remark,
+    `SELECT id, customer_id, machine_id, expiry, enabled, accounts_json, bindings_json, remark,
             last_license_key, last_synced_at, created_at, updated_at
      FROM machines
      ORDER BY updated_at DESC`,
@@ -224,7 +244,7 @@ async function customerPayload(env, customerId) {
   ).bind(customerId).first();
   if (!customer) return null;
   const machines = await env.DB.prepare(
-    `SELECT id, customer_id, machine_id, expiry, enabled, accounts_json, remark,
+    `SELECT id, customer_id, machine_id, expiry, enabled, accounts_json, bindings_json, remark,
             last_license_key, last_synced_at, created_at, updated_at
      FROM machines WHERE customer_id = ? ORDER BY updated_at DESC`,
   ).bind(customerId).all();
@@ -311,9 +331,9 @@ async function addMachine(request, env, customerId) {
   const now = nowIso();
   await env.DB.prepare(
     `INSERT INTO machines (
-      id, customer_id, machine_id, expiry, enabled, accounts_json, remark,
+      id, customer_id, machine_id, expiry, enabled, accounts_json, bindings_json, remark,
       last_license_key, last_synced_at, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, '', '', ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, '[]', ?, '', '', ?, ?)`,
   ).bind(
     makeId("mac"),
     customerId,
@@ -335,19 +355,29 @@ async function updateMachine(request, env, machineIdParam) {
   const current = await getMachine(env, machineId);
   if (!current) return json({ ok: false, message: "Machine not found" }, 404);
   const accounts = cleanAccounts(body.accounts || []);
+  const bindings = Object.prototype.hasOwnProperty.call(body, "bindings")
+    ? await createAccountBindings(body.bindings)
+    : null;
+  const effectiveAccounts = bindings
+    ? cleanAccounts([...accounts, ...bindings.map((binding) => binding.account)])
+    : accounts;
   await env.DB.prepare(
     `UPDATE machines
-     SET expiry = ?, enabled = ?, accounts_json = ?, remark = ?, updated_at = ?
+     SET expiry = ?, enabled = ?, accounts_json = ?, bindings_json = COALESCE(?, bindings_json), remark = ?, updated_at = ?
      WHERE machine_id = ?`,
   ).bind(
     normalizeExpiry(body.expiry),
     body.enabled === false ? 0 : 1,
-    JSON.stringify(accounts),
+    JSON.stringify(effectiveAccounts),
+    bindings ? JSON.stringify(bindings) : null,
     cleanText(body.remark),
     nowIso(),
     machineId,
   ).run();
-  await audit(env, "machine.update", machineId, { accounts });
+  await audit(env, "machine.update", machineId, {
+    accounts: effectiveAccounts,
+    safe_code_binding_accounts: bindings ? bindings.map((binding) => binding.account) : undefined,
+  });
   const r2 = await publishWhitelist(env, machineId);
   const customer = await customerPayload(env, current.customer_id);
   if (!customer) return json({ ok: false, message: "Customer not found" }, 404);
@@ -368,6 +398,10 @@ async function generateLicense(request, env, machineIdParam) {
 
   const hasOwn = (name) => Object.prototype.hasOwnProperty.call(body, name);
   const accounts = hasOwn("accounts") ? cleanAccounts(body.accounts || []) : cleanAccounts(machine.accounts || []);
+  const bindings = hasOwn("bindings")
+    ? await createAccountBindings(body.bindings)
+    : (machine._bindings || []);
+  const effectiveAccounts = cleanAccounts([...accounts, ...bindings.map((binding) => binding.account)]);
   const enabled = hasOwn("enabled") ? body.enabled !== false : machine.enabled !== false;
   const remark = hasOwn("remark") ? cleanText(body.remark) : cleanText(machine.remark);
 
@@ -380,11 +414,11 @@ async function generateLicense(request, env, machineIdParam) {
     ).bind(makeId("lic"), machine.customer_id, machineId, expiry, Number(body.days || 0) || null, licenseKey, now),
     env.DB.prepare(
       `UPDATE machines
-       SET expiry = ?, enabled = ?, accounts_json = ?, remark = ?, last_license_key = ?, updated_at = ?
+       SET expiry = ?, enabled = ?, accounts_json = ?, bindings_json = ?, remark = ?, last_license_key = ?, updated_at = ?
        WHERE machine_id = ?`,
-    ).bind(expiry, enabled ? 1 : 0, JSON.stringify(accounts), remark, licenseKey, now, machineId),
+    ).bind(expiry, enabled ? 1 : 0, JSON.stringify(effectiveAccounts), JSON.stringify(bindings), remark, licenseKey, now, machineId),
   ]);
-  await audit(env, "license.generate", machineId, { expiry, accounts_count: accounts.length });
+  await audit(env, "license.generate", machineId, { expiry, accounts_count: effectiveAccounts.length, safe_code_binding_count: bindings.length });
   const r2 = await publishWhitelist(env, machineId);
   return json({ ok: true, license_key: licenseKey, expiry, r2 });
 }
@@ -400,6 +434,34 @@ async function getR2Record(env, machineIdParam) {
   if (!machineId) return json({ ok: false, message: "Invalid machine ID" }, 400);
   const verification = await verifyPublicWhitelist(env, machineId);
   return json({ ok: true, record: verification.record || null, verification });
+}
+
+async function verifyAccountBinding(request, env) {
+  const body = await readJson(request);
+  const machineId = normalizeMachineId(body.machine_id);
+  const account = normalizeAccount(body.account);
+  const safeCode = normalizeSafeCode(body.safe_code);
+  if (!machineId || !account || !safeCode) {
+    return json({ ok: true, allowed: false, message: "会员账号或安全码不匹配" }, 400);
+  }
+
+  const row = await env.DB.prepare(
+    `SELECT m.machine_id, m.enabled, m.bindings_json, c.status AS customer_status
+       FROM machines m
+       LEFT JOIN customers c ON c.id = m.customer_id
+      WHERE m.machine_id = ?`,
+  ).bind(machineId).first();
+  if (!row || row.enabled === 0 || row.customer_status !== "active") {
+    return json({ ok: true, allowed: false, message: "该账号授权已停用，请联系管理员" }, 403);
+  }
+
+  const binding = safeJsonBindings(row.bindings_json).find((item) => item.account === account);
+  if (!binding || !(await verifySafeCode(safeCode, binding.verifier))) {
+    // Keep this response deliberately generic: it must not reveal whether a
+    // particular account or safety code exists in another customer's record.
+    return json({ ok: true, allowed: false, message: "会员账号或安全码不匹配" }, 403);
+  }
+  return json({ ok: true, allowed: true, message: "账号与安全码校验通过" });
 }
 
 async function publishWhitelist(env, machineIdParam) {
@@ -580,19 +642,26 @@ async function verifyPublicWhitelist(env, machineIdParam) {
 
 async function getMachine(env, machineId) {
   const row = await env.DB.prepare(
-    `SELECT id, customer_id, machine_id, expiry, enabled, accounts_json, remark,
+    `SELECT id, customer_id, machine_id, expiry, enabled, accounts_json, bindings_json, remark,
             last_license_key, last_synced_at, created_at, updated_at
      FROM machines WHERE machine_id = ?`,
   ).bind(machineId).first();
-  return row ? normalizeMachineRow(row) : null;
+  return row ? normalizeMachineRow(row, true) : null;
 }
 
-function normalizeMachineRow(row) {
-  return {
+function normalizeMachineRow(row, includeBindingVerifiers = false) {
+  const bindings = safeJsonBindings(row.bindings_json);
+  const normalized = {
     ...row,
     enabled: row.enabled !== 0,
     accounts: safeJsonArray(row.accounts_json),
+    binding_accounts: bindings.map((binding) => binding.account),
+    safe_code_binding_required: bindings.length > 0,
   };
+  // Verifiers must never be returned to the browser admin UI or public R2.
+  if (includeBindingVerifiers) normalized._bindings = bindings;
+  delete normalized.bindings_json;
+  return normalized;
 }
 
 function whitelistRecord(machine, updatedAt = nowIso()) {
@@ -601,6 +670,10 @@ function whitelistRecord(machine, updatedAt = nowIso()) {
     customer_id: machine.customer_id,
     enabled: machine.enabled !== false,
     accounts: cleanAccounts(machine.accounts || []),
+    // This tells the new client to contact the Worker for an account +
+    // safety-code check.  No hash, salt, or safety code is exposed publicly.
+    safe_code_binding_required: (machine._bindings || []).length > 0,
+    bound_accounts: (machine._bindings || []).map((binding) => binding.account),
     remark: cleanText(machine.remark),
     // The code is RSA-signed and machine-bound.  Desktop clients verify it
     // before saving, so a public object cannot grant another machine access.
@@ -766,6 +839,78 @@ function cleanAccounts(values) {
     out.push(account);
   }
   return out;
+}
+
+function normalizeAccount(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function normalizeSafeCode(value) {
+  return String(value || "").trim();
+}
+
+async function createAccountBindings(values) {
+  if (!Array.isArray(values)) throw new Error("安全码绑定格式错误");
+  const bindings = [];
+  const seen = new Set();
+  for (const item of values) {
+    const account = normalizeAccount(item?.account);
+    const safeCode = normalizeSafeCode(item?.safe_code);
+    if (!account || !safeCode) throw new Error("每条安全码绑定都必须填写会员账号和安全码");
+    if (safeCode.length > 128) throw new Error("安全码长度不能超过 128 个字符");
+    if (seen.has(account)) throw new Error(`会员账号重复：${account}`);
+    seen.add(account);
+    bindings.push({ account, verifier: await createSafeCodeVerifier(safeCode) });
+  }
+  return bindings;
+}
+
+function safeJsonBindings(value) {
+  try {
+    const parsed = JSON.parse(value || "[]");
+    if (!Array.isArray(parsed)) return [];
+    const seen = new Set();
+    return parsed.flatMap((item) => {
+      const account = normalizeAccount(item?.account);
+      const verifier = String(item?.verifier || "");
+      if (!account || !verifier || seen.has(account)) return [];
+      seen.add(account);
+      return [{ account, verifier }];
+    });
+  } catch {
+    return [];
+  }
+}
+
+async function createSafeCodeVerifier(safeCode) {
+  const saltBytes = crypto.getRandomValues(new Uint8Array(16));
+  const salt = base64Url(saltBytes);
+  const hash = await pbkdf2Bytes(safeCode, saltBytes, 120000);
+  return `pbkdf2-sha256-120000.${salt}.${base64Url(hash)}`;
+}
+
+async function verifySafeCode(safeCode, verifier) {
+  const parts = String(verifier || "").split(".");
+  if (parts.length !== 3 || parts[0] !== "pbkdf2-sha256-120000") return false;
+  try {
+    const expected = base64UrlToBytes(parts[2]);
+    const actual = new Uint8Array(await pbkdf2Bytes(safeCode, base64UrlToBytes(parts[1]), 120000));
+    if (actual.length !== expected.length) return false;
+    let difference = 0;
+    for (let i = 0; i < actual.length; i += 1) difference |= actual[i] ^ expected[i];
+    return difference === 0;
+  } catch {
+    return false;
+  }
+}
+
+async function pbkdf2Bytes(value, salt, iterations) {
+  const key = await crypto.subtle.importKey("raw", encoder.encode(value), "PBKDF2", false, ["deriveBits"]);
+  return crypto.subtle.deriveBits(
+    { name: "PBKDF2", hash: "SHA-256", salt, iterations },
+    key,
+    256,
+  );
 }
 
 function normalizeExpiry(value) {

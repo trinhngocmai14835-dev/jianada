@@ -1,8 +1,8 @@
 {
-  "version": "2026.10.29.2",
-  "url": "https://pub-465f078b4f484662b30eb39d27ae5155.r2.dev/releases/jianada-2026.10.29.2.zip",
-  "sha256": "2ff5661598ef4ed8d9510bf270ff7e71e09269324e08a89132abfe8983af243b",
-  "size": 246110372,
-  "notes": "修复双色颜色轮换追损实时日志：后端已接入日志转发，启动、观察、异常与停止信息都会显示；同时避免任务快速停止时漏掉日志。",
+  "version": "2026.11.05.1",
+  "url": "https://pub-465f078b4f484662b30eb39d27ae5155.r2.dev/releases/jianada-2026.11.05.1.zip",
+  "sha256": "faff39cce6c1d2803a5c2a8780a60b8a8867f7fb1de28403dcd1176942b01ecd",
+  "size": 246113530,
+  "notes": "新增会员账号与固定安全码的在线绑定校验。绑定后，任务启动会向授权后台核验；安全码不保存在 R2，错误或缺失将被拦截。",
   "force": false
 }

@@ -145,6 +145,15 @@ export default function LicensePage({ licenseInfo, onActivated }) {
                       {whitelist.customer_id ? ` · 客户ID：${whitelist.customer_id}` : ''}
                     </Text>
                   </div>
+                  {whitelist.safe_code_binding_required && (
+                    <Alert
+                      style={{ marginBottom: 10 }}
+                      type="info"
+                      showIcon
+                      message="已启用安全码绑定"
+                      description="启动任务时将在线验证会员账号与管理员指定的安全码。"
+                    />
+                  )}
                   {accounts.length ? (
                     <Space wrap>
                       {accounts.map((account) => <Tag color="blue" key={account}>{account}</Tag>)}

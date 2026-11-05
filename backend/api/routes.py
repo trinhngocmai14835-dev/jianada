@@ -392,7 +392,10 @@ def _login_accounts_for_task(task_id: str, cfg: dict):
 
 
 def _check_account_whitelist(task_id: str, cfg: dict):
-    ok, msg, _status = check_accounts_allowed(_login_accounts_for_task(task_id, cfg))
+    ok, msg, _status = check_accounts_allowed(
+        _login_accounts_for_task(task_id, cfg),
+        str(cfg.get("safe_code") or ""),
+    )
     return ok, msg
 
 
