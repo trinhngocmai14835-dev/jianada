@@ -31,6 +31,11 @@ from services.five_group_rotate_bet_svc import (
     get_account_statuses as five_group_rotatebet_account_statuses,
     stop_account as stop_five_group_rotatebet_account,
 )
+from services.nine_code_pick_bet_svc import (
+    run as nine_code_pickbet_run,
+    get_account_statuses as nine_code_pickbet_account_statuses,
+    stop_account as stop_nine_code_pickbet_account,
+)
 from services.custom_win_bet_svc import (
     run as custom_win_bet_run,
     get_account_statuses as custom_winbet_account_statuses,
@@ -68,6 +73,7 @@ TASK_LABELS = {
     "random_rotatebet": "随机码追损",
     "color_rotatebet": "双色颜色轮换追损",
     "five_group_rotatebet": "私定五码组三球追损",
+    "nine_code_pickbet": "1106私订九粒选码",
     "custom_winbet": "自定义金额轮换赢冲",
     "four_code_winbet": "4粒码赢冲输缩",
     "main_trend_bet": "主势大小单双追损",
@@ -183,6 +189,21 @@ DEFAULT_FIVE_GROUP_ROTATEBET = {
     "amount_steps": [100, 130, 299, 389, 506],
     "base_bet_amount": 100,
     "bet_window_min": 30,
+    "start_mode": "now",
+    "start_time": "09:00",
+}
+DEFAULT_NINE_CODE_PICKBET = {
+    "entry_url": "https://166.tt",
+    "safe_code": "",
+    "accounts": [{"account": "", "password": "", "port": 9222}],
+    "base_bet_amount": 100,
+    "enabled_positions": [True, True, True],
+    "daily_stop_loss": 29000,
+    "take_profit": 25000,
+    "bet_window_min": 20,
+    "bet_window_max": 90,
+    "close_buffer": 10,
+    "draw_delay": 73,
     "start_mode": "now",
     "start_time": "09:00",
 }
@@ -476,6 +497,20 @@ def save_five_group_rotatebet_config(data: dict):
     set_config("five_group_rotatebet_config", existing)
     return {"ok": True}
 
+
+@router.get("/config/nine-code-pickbet")
+def get_nine_code_pickbet_config():
+    return _normalize_start_config({**DEFAULT_NINE_CODE_PICKBET, **get_config("nine_code_pickbet_config", {})}, DEFAULT_NINE_CODE_PICKBET["start_time"])
+
+
+@router.post("/config/nine-code-pickbet")
+def save_nine_code_pickbet_config(data: dict):
+    existing = get_config("nine_code_pickbet_config", DEFAULT_NINE_CODE_PICKBET)
+    existing.update(data)
+    existing = _normalize_start_config(existing, DEFAULT_NINE_CODE_PICKBET["start_time"])
+    set_config("nine_code_pickbet_config", existing)
+    return {"ok": True}
+
 @router.get("/config/custom-winbet")
 def get_custom_winbet_config():
     return _normalize_start_config({**DEFAULT_CUSTOM_WINBET, **get_config("custom_winbet_config", {})}, DEFAULT_CUSTOM_WINBET["start_time"])
@@ -728,6 +763,36 @@ def five_group_rotatebet_account_status():
 @router.post("/five-group-rotatebet/accounts/stop")
 def stop_five_group_rotatebet_account_route(req: StopCustomRotateBetAccountRequest):
     ok, msg = stop_five_group_rotatebet_account(req.key)
+    return {"ok": ok, "message": msg}
+
+
+@router.post("/nine-code-pickbet/start")
+def start_nine_code_pickbet():
+    ok, msg = _check_license()
+    if not ok:
+        return {"ok": False, "message": msg}
+    cfg = _normalize_start_config({**DEFAULT_NINE_CODE_PICKBET, **get_config("nine_code_pickbet_config", {})}, DEFAULT_NINE_CODE_PICKBET["start_time"])
+    ok, msg = _check_account_whitelist("nine_code_pickbet", cfg)
+    if not ok:
+        return {"ok": False, "message": msg}
+    ok, msg = TaskManager.get().start("nine_code_pickbet", nine_code_pickbet_run, cfg)
+    return {"ok": ok, "message": msg}
+
+
+@router.post("/nine-code-pickbet/stop")
+def stop_nine_code_pickbet():
+    ok, msg = TaskManager.get().stop("nine_code_pickbet")
+    return {"ok": ok, "message": msg}
+
+
+@router.get("/nine-code-pickbet/accounts/status")
+def nine_code_pickbet_account_status():
+    return {"accounts": nine_code_pickbet_account_statuses()}
+
+
+@router.post("/nine-code-pickbet/accounts/stop")
+def stop_nine_code_pickbet_account_route(req: StopCustomRotateBetAccountRequest):
+    ok, msg = stop_nine_code_pickbet_account(req.key)
     return {"ok": ok, "message": msg}
 
 def _snapshot_meta(snapshot: dict[str, Any] | None) -> dict[str, Any] | None:
