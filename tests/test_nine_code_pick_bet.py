@@ -6,7 +6,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
 
 from api.ws import _TASK_IDS
 from api.routes import DEFAULT_NINE_CODE_PICKBET
-from services.nine_code_pick_bet_svc import numbers_for_draw
+from services.nine_code_pick_bet_svc import OFFSET_CYCLE, next_offset, numbers_for_draw
 
 
 def check(condition, message):
@@ -22,11 +22,12 @@ def test_one_to_nine_rule_and_wraparound():
     check(targets[2] == [0, 2, 3, 4, 5, 6, 7, 8, 9], "ball 3 must exclude 1")
 
 
-def test_nine_wraps_back_to_one_in_caller():
+def test_private_offset_cycle_is_exact():
     excluded, targets = numbers_for_draw([9, 8, 0], 9)
     check(excluded == [8, 7, 9], "+9 must use modulo ten")
     check(all(len(numbers) == 9 for numbers in targets), "every active ball must contain exactly nine numbers")
-    check((9 % 9) + 1 == 1, "offset cycle after +9 must restart at +1")
+    check(OFFSET_CYCLE == (1, 2, 5, 6, 9), "private offsets must match the configured rule")
+    check([next_offset(value) for value in OFFSET_CYCLE] == [2, 5, 6, 9, 1], "offsets must rotate and wrap after +9")
 
 
 def test_disabled_position_has_no_bet_numbers():
@@ -47,7 +48,7 @@ def test_default_has_fixed_amount_and_no_chasing_ladder():
 
 if __name__ == "__main__":
     test_one_to_nine_rule_and_wraparound()
-    test_nine_wraps_back_to_one_in_caller()
+    test_private_offset_cycle_is_exact()
     test_disabled_position_has_no_bet_numbers()
     test_strategy_is_registered_for_live_logs()
     test_default_has_fixed_amount_and_no_chasing_ladder()

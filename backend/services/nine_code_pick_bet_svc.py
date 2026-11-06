@@ -36,6 +36,7 @@ from services.settlement_guard import issue_gap, is_newer_issue, read_stable_dra
 
 GROUPS = {'A': [0, 5], 'B': [1, 6], 'C': [2, 7], 'D': [3, 8], 'E': [4, 9]}
 GROUP_LABELS = {'A': '05', 'B': '16', 'C': '27', 'D': '38', 'E': '49'}
+OFFSET_CYCLE = (1, 2, 5, 6, 9)
 
 DEFAULT_NUMBER_SETS = [
     ([0, 1, 3, 5, 8], [2, 4, 6, 7, 9]) for _ in range(NUM_POSITIONS)
@@ -399,6 +400,15 @@ def numbers_for_draw(previous_draw, offset: int, enabled_positions=None):
         targets.append([number for number in range(10) if number != removed] if enabled[index] else [])
     return excluded, targets
 
+
+def next_offset(offset: int) -> int:
+    """Advance through the configured private rotation, wrapping after +9."""
+    try:
+        index = OFFSET_CYCLE.index(int(offset))
+    except (TypeError, ValueError):
+        return OFFSET_CYCLE[0]
+    return OFFSET_CYCLE[(index + 1) % len(OFFSET_CYCLE)]
+
 def _betting_loop(page, account, cfg, stop_event, log):
     stop_loss = _parse_risk_limit(cfg.get("daily_stop_loss", 29000), 29000)
     take_profit = _parse_risk_limit(cfg.get("take_profit", 25000), 25000)
@@ -473,7 +483,7 @@ def _betting_loop(page, account, cfg, stop_event, log):
                     last_targets = None
                     last_issue = issue
                     previous_draw = draw
-                    offset = 1 if offset >= 9 else offset + 1
+                    offset = next_offset(offset)
                     log(f"[{account}] 下一期：按本期开奖号码 +{offset} 排除，每球投注其余9码")
             elif issue != last_issue:
                 previous_draw = draw
