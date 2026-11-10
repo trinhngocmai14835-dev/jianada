@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import {
   Card, Form, Input, InputNumber, Button, Space, Typography,
-  Row, Col, message, Tag, Alert, Collapse,
+  Row, Col, message, Tag, Alert, Collapse, Radio,
 } from 'antd'
 import { PlusOutlined, MinusCircleOutlined, PlayCircleOutlined, PauseCircleOutlined, ChromeOutlined } from '@ant-design/icons'
 import { api } from '../api/client'
@@ -227,6 +227,18 @@ export default function FollowBetPage() {
                 </Panel>
 
                 <Panel header="⚙️ 投注参数" key="strategy">
+                  <Form.Item label="跟投盘口" name="market_mode" initialValue="number">
+                    <Radio.Group optionType="button" buttonStyle="solid">
+                      <Radio.Button value="number">数字球</Radio.Button>
+                      <Radio.Button value="main_trend">主势单双 / 大小</Radio.Button>
+                    </Radio.Group>
+                  </Form.Item>
+                  <Alert
+                    type="info"
+                    showIcon
+                    message="主势模式读取客户注单中的单、双、大、小，并在跟投账号主势盘对应输入框下注。"
+                    style={{ marginBottom: 12 }}
+                  />
                   <Row gutter={16}>
                     <Col span={12}>
                       <Form.Item label="开始窗口倒计时 (秒)" name="bet_window_start">
