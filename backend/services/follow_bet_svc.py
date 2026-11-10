@@ -16,6 +16,7 @@ from datetime import datetime, date
 from playwright.sync_api import sync_playwright
 
 from services.auto_bet_svc import _sleep_interruptible, _login
+from services.main_trend_bet_svc import _place_main_trend_bet
 
 POS_PREFIX = {"b1": "odds_B1QH", "b2": "odds_B2QH", "b3": "odds_B3QH"}
 
@@ -286,7 +287,7 @@ _FETCH_JS = """() => {
                 var tds=trs[i].querySelectorAll('td');
                 if(tds.length<=idx.content || tds.length<=idx.amount) continue;
                 var content=(tds[idx.content].innerText||'').replace(/\\s+/g,' ').trim();
-                if(content.indexOf('球')<0) continue;
+            if(content.indexOf('球')<0 && content.indexOf('主势')<0 && content.indexOf('大小')<0 && content.indexOf('单双')<0) continue;
                 var amount=(tds[idx.amount].innerText||'').replace(/[^0-9.]/g,'');
                 var account=(idx.account>=0&&idx.account<tds.length)?(tds[idx.account].innerText||'').replace(/\\s+/g,'_').trim():'unknown';
                 var betId=(idx.betId>=0&&idx.betId<tds.length)?(tds[idx.betId].innerText||'').trim():'';
@@ -303,7 +304,24 @@ _FETCH_JS = """() => {
 }"""
 
 
-def _fetch_bets(page_a: object) -> dict:
+def _parse_main_trend_targets(content: str) -> list[str]:
+    """从客户注单中提取主势盘分类；盘口标题本身不算结果。"""
+    text = re.sub(r"\s+", "", str(content or ""))
+    found = []
+    for market, values in (("大小", "大小"), ("单双", "单双")):
+        if market in text:
+            tail = text.split(market, 1)[1][:20]
+            match = re.search(f"[{values}]", tail)
+            if match and match.group(0) not in found:
+                found.append(match.group(0))
+    if not found:
+        match = re.fullmatch(r"(?:主势盘)?([大小单双])", text)
+        if match:
+            found.append(match.group(1))
+    return found
+
+
+def _fetch_bets(page_a: object, market_mode: str = "number") -> dict:
     """读注单明细，返回 {(账号,期号): [ {betId,pos,num,amount}, ... ]}。
     amount = 客户该注下注金额（整数元），用于按倍数跟投与自算结算。"""
     try:
@@ -324,6 +342,12 @@ def _fetch_bets(page_a: object) -> dict:
             continue
         bet_id = (item.get("betId") or "").strip()
         c = item["content"]
+        if market_mode == "main_trend":
+            for target in _parse_main_trend_targets(c):
+                uid = bet_id or f"main:{target}@{amount}"
+                groups.setdefault(key, []).append(
+                    {"betId": uid, "pos": "main", "num": target, "amount": amount})
+            continue
         # 用 findall 拿到行内所有的"第X球【N】"组合（通常一行一个）
         pairs = re.findall(r"第\s*([一二三123])\s*球[^一二三1-3球]{0,20}?[〖【\[\(](\d)[〗】\]\)]", c)
         for pos_char, num_str in pairs:
@@ -469,7 +493,7 @@ _SET_COUNT_JS = ("(function(){"
     "})()")
 
 
-def _refresh_page(rp) -> dict | None:
+def _refresh_page(rp, market_mode: str = "number") -> dict | None:
     try:
         rp.reload(wait_until="load", timeout=25000)
     except Exception:
@@ -484,7 +508,7 @@ def _refresh_page(rp) -> dict | None:
     except Exception:
         time.sleep(1.5)
     try:
-        return _fetch_bets(rp)
+        return _fetch_bets(rp, market_mode)
     except Exception:
         return None
 
@@ -625,6 +649,7 @@ def run(config: dict, stop_event: threading.Event, log_queue: queue.Queue):
 
     source_port = str(config.get("source_port", "9222"))
     followers_cfg = config.get("followers", [{"port": "9223", "multiplier": 1}])
+    market_mode = config.get("market_mode", "number")
     BET_START = config.get("bet_window_start", 120)
     BET_END = config.get("bet_window_end", 35)
     REFRESH = config.get("refresh_sec", 5)
@@ -782,7 +807,7 @@ def run(config: dict, stop_event: threading.Event, log_queue: queue.Queue):
         except Exception:
             pass
 
-        tracker = _Tracker(ODDS, REBATE, log)
+        tracker = _Tracker(ODDS, REBATE, log) if market_mode != "main_trend" else None
         done_set: set = set()   # 已成功跟投的 (跟投端口, 下注编号, 球, 号)，逐账号独立去重/重试
         total_bets = 0
         last_draw = None
@@ -816,10 +841,11 @@ def run(config: dict, stop_event: threading.Event, log_queue: queue.Queue):
                 if bet_placed_this_period and draw_nums != last_settled:
                     last_settled = draw_nums
                     bet_placed_this_period = False
-                    for per in sorted(tracker.pending.keys(), reverse=True):
-                        if per not in tracker.settled:
-                            tracker.settle(per, draw_nums)
-                            break
+                    if tracker:
+                        for per in sorted(tracker.pending.keys(), reverse=True):
+                            if per not in tracker.settled:
+                                tracker.settle(per, draw_nums)
+                                break
 
             # 判断窗口
             if cd > BET_START:
@@ -850,7 +876,7 @@ def run(config: dict, stop_event: threading.Event, log_queue: queue.Queue):
 
             all_groups: dict = {}
             for rp in report_pages:
-                g = _refresh_page(rp)
+                g = _refresh_page(rp, market_mode)
                 if g:
                     _merge_groups(all_groups, g)
 
@@ -879,18 +905,28 @@ def run(config: dict, stop_event: threading.Event, log_queue: queue.Queue):
                     my_bets: dict = {}
                     for b in pending:
                         amt = max(1, int(round(b["amount"] * f_mult)))   # 客户金额×倍数
-                        my_bets.setdefault(b["pos"], {})[b["num"]] = amt
+                        if market_mode == "main_trend":
+                            my_bets[b["num"]] = my_bets.get(b["num"], 0) + amt
+                        else:
+                            my_bets.setdefault(b["pos"], {})[b["num"]] = amt
                     rp = _find_cd_page(f_browser) or _get_real_page(f_browser) or f_page
-                    ok = _place_bet(rp, my_bets, log)
+                    if market_mode == "main_trend":
+                        ok, _odds = _place_main_trend_bet(rp, my_bets, log, acc_tag)
+                    else:
+                        ok = _place_bet(rp, my_bets, log)
                     if ok:
                         for b in pending:
                             done_set.add((f_port, b["betId"], b["pos"], b["num"]))
                         total_bets += len(pending)
                         bet_placed_this_period = True
-                        tracker.record(period, f_port, my_bets, acc_tag)
-                        amt_desc = ", ".join(
-                            f"{pos}:{'/'.join(str(a) for a in na.values())}"
-                            for pos, na in my_bets.items())
+                        if tracker:
+                            tracker.record(period, f_port, my_bets, acc_tag)
+                        if market_mode == "main_trend":
+                            amt_desc = ", ".join(f"{target}:{amount}" for target, amount in my_bets.items())
+                        else:
+                            amt_desc = ", ".join(
+                                f"{pos}:{'/'.join(str(a) for a in na.values())}"
+                                for pos, na in my_bets.items())
                         log(f"    ✅ [{acc_tag}] {f_mult}倍 跟客户{len(pending)}注 [{amt_desc}] | 累计{total_bets}注")
                     else:
                         log(f"    ❌ [{acc_tag}] 失败，下次重试")
@@ -898,4 +934,5 @@ def run(config: dict, stop_event: threading.Event, log_queue: queue.Queue):
 
             time.sleep(REFRESH)
 
-        log(f"⏹️ 跟投停止 | 共跟投{total_bets}注 | 自算累计: {tracker.total:+.2f}")
+        total_desc = f"{tracker.total:+.2f}" if tracker else "主势分类镜像模式"
+        log(f"⏹️ 跟投停止 | 共跟投{total_bets}注 | 自算累计: {total_desc}")

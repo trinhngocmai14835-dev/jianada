@@ -194,6 +194,7 @@ DEFAULT_MAIN_TREND_BET = {
     "start_time": "09:00",
 }
 DEFAULT_FOLLOWBET = {
+    "market_mode": "number",
     "entry_url": "",
     "safe_code": "",           # 平台入口安全码（关键字），采集+所有跟投账号共用
     "source_port": "9222",
