@@ -2,8 +2,10 @@ from services.follow_bet_svc import (
     _fetch_bets,
     _parse_main_trend_targets,
     _rebuild_report_url,
+    _business_day_str,
 )
 from urllib.parse import parse_qs, urlparse
+from datetime import datetime
 import json
 
 
@@ -39,3 +41,8 @@ def test_rebuild_report_url_rotates_date_domain_and_agent():
     assert '2026-11-11' in rebuilt
     qd = json.loads(parse_qs(urlparse(rebuilt).query)["querydata"][0])
     assert qd["userid"] == "C1"
+
+
+def test_business_day_changes_at_seven_am():
+    assert _business_day_str(datetime(2026, 11, 11, 6, 59)) == "2026-11-10"
+    assert _business_day_str(datetime(2026, 11, 11, 7, 0)) == "2026-11-11"

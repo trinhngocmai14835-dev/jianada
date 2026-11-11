@@ -12,13 +12,20 @@ import subprocess
 import shutil
 import os
 import urllib.parse
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from playwright.sync_api import sync_playwright
 
 from services.auto_bet_svc import _sleep_interruptible, _login
 from services.main_trend_bet_svc import _place_main_trend_bet
 
 POS_PREFIX = {"b1": "odds_B1QH", "b2": "odds_B2QH", "b3": "odds_B3QH"}
+
+# 平台每天 07:00 才切换开奖记录业务日；00:00-06:59 仍属于前一个业务日。
+def _business_day_str(now: datetime | None = None) -> str:
+    current = now or datetime.now()
+    if current.hour < 7:
+        current -= timedelta(days=1)
+    return current.strftime("%Y-%m-%d")
 
 
 # ─── Chrome 启动工具 ──────────────────────────────────────────
@@ -458,7 +465,7 @@ def _merge_groups(all_groups: dict, g: dict):
 def _navigate_today(page, log):
     """把报表页日期自动切换到今天，避免读到旧注单"""
     try:
-        today = date.today().strftime("%Y-%m-%d")
+        today = _business_day_str()
         url = page.url
         parsed = urllib.parse.urlparse(url)
         params = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
@@ -754,7 +761,7 @@ def run(config: dict, stop_event: threading.Event, log_queue: queue.Queue):
         if follow_targets:
             dom = _current_domain(browser_a, src_login_page)
             cur_uid, cur_login = _current_agent_ids(browser_a)
-            today = date.today().strftime("%Y-%m-%d")
+            today = _business_day_str()
             log(f"[A] 目标客户URL重拼：域名 {dom or '(用原URL域名)'} | 代理 {cur_login or '(未取到,用原loginId)'} | 日期 {today}")
             opened = 0
             for t in follow_targets:
@@ -800,7 +807,7 @@ def run(config: dict, stop_event: threading.Event, log_queue: queue.Queue):
             return
         page_a = report_pages[0]
         _navigate_today(page_a, log)
-        last_report_day = date.today().strftime("%Y-%m-%d")
+        last_report_day = _business_day_str()
         log(f"[A] 开始监控注单明细")
 
         # 初始化分页
@@ -824,7 +831,7 @@ def run(config: dict, stop_event: threading.Event, log_queue: queue.Queue):
         _cd_miss = 0
         while not stop_event.is_set():
             # 跨天后自动重拼目标客户未结明细地址，避免持续监控昨天的日期。
-            today = date.today().strftime("%Y-%m-%d")
+            today = _business_day_str()
             if today != last_report_day:
                 if follow_targets:
                     try:
