@@ -750,6 +750,7 @@ def run(config: dict, stop_event: threading.Event, log_queue: queue.Queue):
             return
 
         # 目标客户未结明细：用【当前登录域名+今天日期】重拼粘贴的URL并自动打开（免去手动找页面）
+        target_pages = []
         if follow_targets:
             dom = _current_domain(browser_a, src_login_page)
             cur_uid, cur_login = _current_agent_ids(browser_a)
@@ -761,6 +762,7 @@ def run(config: dict, stop_event: threading.Event, log_queue: queue.Queue):
                     rebuilt = _rebuild_report_url(str(t["url"]).strip(), dom, today, cur_uid, cur_login)
                     tp = browser_a.contexts[0].new_page()
                     tp.goto(rebuilt, wait_until="domcontentloaded", timeout=30000)
+                    target_pages.append(tp)
                     opened += 1
                     log(f"[A] 已自动打开目标客户未结明细页: {t.get('label') or ''}")
                 except Exception as e:
@@ -798,6 +800,7 @@ def run(config: dict, stop_event: threading.Event, log_queue: queue.Queue):
             return
         page_a = report_pages[0]
         _navigate_today(page_a, log)
+        last_report_day = date.today().strftime("%Y-%m-%d")
         log(f"[A] 开始监控注单明细")
 
         # 初始化分页
@@ -820,6 +823,42 @@ def run(config: dict, stop_event: threading.Event, log_queue: queue.Queue):
 
         _cd_miss = 0
         while not stop_event.is_set():
+            # 跨天后自动重拼目标客户未结明细地址，避免持续监控昨天的日期。
+            today = date.today().strftime("%Y-%m-%d")
+            if today != last_report_day:
+                if follow_targets:
+                    try:
+                        dom = _current_domain(browser_a, src_login_page)
+                        cur_uid, cur_login = _current_agent_ids(browser_a)
+                        log(f"[A] 检测到跨天，重拼目标客户URL | 日期 {today} | 代理 {cur_login or '(沿用原loginId)'}")
+                        for old_page in target_pages:
+                            try:
+                                old_page.close()
+                            except Exception:
+                                pass
+                        target_pages = []
+                        opened = 0
+                        for t in follow_targets:
+                            try:
+                                rebuilt = _rebuild_report_url(str(t["url"]).strip(), dom, today, cur_uid, cur_login)
+                                tp = browser_a.contexts[0].new_page()
+                                tp.goto(rebuilt, wait_until="domcontentloaded", timeout=30000)
+                                target_pages.append(tp)
+                                opened += 1
+                                log(f"[A] 已切换到今日目标未结明细: {t.get('label') or ''}")
+                            except Exception as e:
+                                log(f"[A] 跨天打开目标未结明细失败({t.get('label') or ''}): {e}")
+                        if opened:
+                            time.sleep(2)
+                            last_report_day = today
+                        else:
+                            log("[A] 跨天重拼未成功，下一轮继续重试")
+                    except Exception as e:
+                        log(f"[A] 跨天重拼目标URL失败，下一轮继续重试: {e}")
+                else:
+                    _navigate_today(page_a, log)
+                    last_report_day = today
+
             real = _find_cd_page(cd_browser)
             if real:
                 cd_page = real
