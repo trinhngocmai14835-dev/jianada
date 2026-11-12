@@ -275,6 +275,8 @@ DEFAULT_COMBO_BET = {
     "bet_window_max": 90,
     "close_buffer": 10,
     "draw_delay": 73,
+    "take_profit": 0,
+    "daily_stop_loss": 0,
 }
 DEFAULT_FOLLOWBET = {
     "market_mode": "number",
@@ -379,6 +381,22 @@ def debug_queue(task_id: str):
     for m in tmp:
         q.put(m)
     return {"queue_size_after": q.qsize(), "messages_drained": msgs, "status": tm.status(task_id)}
+
+@router.get("/logs/{task_id}")
+def get_task_logs(task_id: str, since: int = 0):
+    """读取任务日志，供前端按 seq 增量轮询。"""
+    import queue as _queue
+    tm = TaskManager.get()
+    q = tm.log_queue(task_id)
+    if q is None:
+        return {"messages": [], "seq": int(since or 0), "status": tm.status(task_id)}
+    messages = []
+    while True:
+        try:
+            messages.append(q.get_nowait())
+        except _queue.Empty:
+            break
+    return {"messages": messages, "seq": int(since or 0) + len(messages), "status": tm.status(task_id)}
 
 
 @router.get("/config/rushbet")

@@ -15,7 +15,7 @@ from playwright.sync_api import sync_playwright
 
 from core.db import get_config
 from services.auto_bet_svc import (
-    _free_port, _get_chrome, _get_countdown, _get_last_draw_with_issue,
+    _free_port, _get_chrome, _get_countdown, _get_last_draw_with_issue, _get_balance,
     _login, _place_bet, _sleep_interruptible,
 )
 from services.main_trend_bet_svc import _place_main_trend_bet
@@ -113,6 +113,9 @@ def _betting_loop(page, account, cfg, stop_event, log):
     max_cd = int(cfg.get("bet_window_max", 90))
     close_buffer = int(cfg.get("close_buffer", 10))
     draw_delay = int(cfg.get("draw_delay", 73))
+    take_profit = float(cfg.get("take_profit", 0) or 0)
+    stop_loss = float(cfg.get("daily_stop_loss", 0) or 0)
+    start_balance = _get_balance(page) or 0
     last_issue = None
     placed_issue = None
     heartbeat = 0.0
@@ -132,6 +135,17 @@ def _betting_loop(page, account, cfg, stop_event, log):
                 log(f"[{account}] 🔄 已加载最新组合投注配置，将从下一期生效")
         except Exception as exc:
             log(f"[{account}] 配置热更新读取失败，继续使用当前配置: {exc}")
+        take_profit = float(cfg.get("take_profit", 0) or 0)
+        stop_loss = float(cfg.get("daily_stop_loss", 0) or 0)
+        balance = _get_balance(page)
+        if balance is not None:
+            profit = balance - start_balance
+            if take_profit > 0 and profit >= take_profit:
+                log(f"[{account}] 🎉 达到止盈，累计盈亏={profit:+.2f}，自动停止")
+                break
+            if stop_loss > 0 and profit <= -stop_loss:
+                log(f"[{account}] 🛑 达到止损，累计盈亏={profit:+.2f}，自动停止")
+                break
         cd = _get_countdown(page)
         if cd < 0:
             time.sleep(2)
