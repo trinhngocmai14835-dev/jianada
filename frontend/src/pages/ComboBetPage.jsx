@@ -18,7 +18,7 @@ export default function ComboBetPage() {
   const updatePos = (i, text) => { const positions = [...(cfg.positions || [[], [], []])]; positions[i] = String(text || '').split(/[,，\s]+/).filter(Boolean).map(Number).filter(n => Number.isInteger(n) && n >= 0 && n <= 9); setCfg(c => ({ ...c, positions })) }
   return <div style={{ padding: 24 }}>
     <Title level={3}>主势 + 1–3 组合投注</Title>
-    <Alert type="info" showIcon message="独立玩法：每期先投主势盘和值/两面，再投单球1–3定位；不影响多账号跟投和主势追损。" style={{ marginBottom: 16 }} />
+    <Alert type="info" showIcon message="独立玩法：每期先投主势盘和值/两面，再投单球1–3定位；不影响多账号跟投和主势追损。运行中保存配置后，下一期自动生效，不需要关闭账号或重新登录。" style={{ marginBottom: 16 }} />
     <Card title="账号与入口" style={{ marginBottom: 16 }}>
       <Row gutter={12}><Col span={8}><Text>入口网址</Text><Input value={cfg.entry_url} onChange={e => setCfg({ ...cfg, entry_url: e.target.value })} /></Col><Col span={8}><Text>安全码</Text><Input value={cfg.safe_code} onChange={e => setCfg({ ...cfg, safe_code: e.target.value })} /></Col><Col span={4}><Text>账号</Text><Input value={cfg.accounts?.[0]?.account} onChange={e => setCfg({ ...cfg, accounts: [{ ...(cfg.accounts?.[0] || {}), account: e.target.value }] })} /></Col><Col span={4}><Text>端口</Text><InputNumber value={cfg.accounts?.[0]?.port} onChange={v => setCfg({ ...cfg, accounts: [{ ...(cfg.accounts?.[0] || {}), port: v }] })} style={{ width: '100%' }} /></Col></Row>
     </Card>

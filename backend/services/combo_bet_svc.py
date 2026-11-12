@@ -13,6 +13,7 @@ from datetime import datetime
 
 from playwright.sync_api import sync_playwright
 
+from core.db import get_config
 from services.auto_bet_svc import (
     _free_port, _get_chrome, _get_countdown, _get_last_draw_with_issue,
     _login, _place_bet, _sleep_interruptible,
@@ -106,8 +107,22 @@ def _betting_loop(page, account, cfg, stop_event, log):
     last_issue = None
     placed_issue = None
     heartbeat = 0.0
+    last_cfg_signature = repr(cfg)
     log(f"[{account}] 主势+1-3组合投注启动")
     while not stop_event.is_set():
+        # 热更新：保存配置后不重启浏览器、不重新登录，下一期直接使用新配置。
+        try:
+            latest = get_config("combo_bet_config", cfg) or {}
+            merged = dict(cfg)
+            merged.update(latest)
+            signature = repr(merged)
+            if signature != last_cfg_signature:
+                cfg.clear()
+                cfg.update(merged)
+                last_cfg_signature = signature
+                log(f"[{account}] 🔄 已加载最新组合投注配置，将从下一期生效")
+        except Exception as exc:
+            log(f"[{account}] 配置热更新读取失败，继续使用当前配置: {exc}")
         cd = _get_countdown(page)
         if cd < 0:
             time.sleep(2)
