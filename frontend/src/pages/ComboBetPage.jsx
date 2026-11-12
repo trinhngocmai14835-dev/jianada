@@ -3,7 +3,7 @@ import { Alert, Button, Card, Checkbox, Col, Input, InputNumber, Row, Space, Typ
 import { api } from '../api/client'
 
 const { Title, Text } = Typography
-const SIDE_KEYS = ['大', '小', '单', '双', '极大', '极小', '大单', '大双', '小单', '小双']
+const SIDE_KEYS = ['大', '小', '单', '双']
 
 export default function ComboBetPage() {
   const [cfg, setCfg] = useState({ entry_url: 'https://166.tt', safe_code: '', accounts: [{ account: '', password: '', port: 9222 }], main_sums: {}, main_sides: {}, positions: [[], [], []], position_amounts: [100, 100, 100] })
