@@ -19,6 +19,7 @@ from services.auto_bet_svc import (
     _login, _place_bet, _sleep_interruptible,
 )
 from services.main_trend_bet_svc import _place_main_trend_bet
+from services.rotate_bet_svc import _wait_until_start
 
 TASK_ID = "combo_bet"
 
@@ -163,6 +164,9 @@ def _run_account(acc, cfg, entry_url, safe_code, chrome_path, stop_event, log):
             page = context.new_page()
             try:
                 page = _login(page, context, account, password, entry_url, safe_code, log, target_page="hm13")
+                _wait_until_start(cfg, account, stop_event, log)
+                if stop_event.is_set():
+                    return
                 _betting_loop(page, account, cfg, stop_event, log)
             finally:
                 browser.close()

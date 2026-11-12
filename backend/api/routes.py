@@ -265,6 +265,8 @@ DEFAULT_COMBO_BET = {
     "entry_url": "https://166.tt",
     "safe_code": "",
     "accounts": [{"account": "", "password": "", "port": 9222}],
+    "start_mode": "now",
+    "start_time": "09:00",
     "main_sums": {},
     "main_sides": {},
     "positions": [[], [], []],
