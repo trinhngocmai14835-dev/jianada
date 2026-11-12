@@ -59,6 +59,7 @@ from services.main_trend_bet_svc import (
     get_account_statuses as main_trend_bet_account_statuses,
     stop_account as stop_main_trend_bet_account,
 )
+from services.combo_bet_svc import run as combo_bet_run
 from services.account_whitelist import (
     get_account_whitelist_status,
     check_accounts_allowed,
@@ -83,6 +84,7 @@ TASK_LABELS = {
     "custom_winbet": "自定义金额轮换赢冲",
     "four_code_winbet": "4粒码赢冲输缩",
     "main_trend_bet": "主势大小单双追损",
+    "combo_bet": "主势+1-3组合投注",
 }
 
 
@@ -258,6 +260,19 @@ DEFAULT_MAIN_TREND_BET = {
     "enabled_paths": [True, True],
     "start_mode": "now",
     "start_time": "09:00",
+}
+DEFAULT_COMBO_BET = {
+    "entry_url": "https://166.tt",
+    "safe_code": "",
+    "accounts": [{"account": "", "password": "", "port": 9222}],
+    "main_sums": {},
+    "main_sides": {},
+    "positions": [[], [], []],
+    "position_amounts": [100, 100, 100],
+    "bet_window_min": 20,
+    "bet_window_max": 90,
+    "close_buffer": 10,
+    "draw_delay": 73,
 }
 DEFAULT_FOLLOWBET = {
     "market_mode": "number",
@@ -580,6 +595,17 @@ def save_main_trend_bet_config(data: dict):
     existing.update(data)
     existing = _normalize_start_config(existing, DEFAULT_MAIN_TREND_BET["start_time"])
     set_config("main_trend_bet_config", existing)
+    return {"ok": True}
+
+@router.get("/config/combo-bet")
+def get_combo_bet_config():
+    return {**DEFAULT_COMBO_BET, **get_config("combo_bet_config", {})}
+
+@router.post("/config/combo-bet")
+def save_combo_bet_config(data: dict):
+    existing = {**DEFAULT_COMBO_BET, **get_config("combo_bet_config", {})}
+    existing.update(data or {})
+    set_config("combo_bet_config", existing)
     return {"ok": True}
 
 @router.get("/status")
@@ -1049,6 +1075,22 @@ class StopMainTrendBetAccountRequest(BaseModel):
 @router.post("/main-trend-bet/accounts/stop")
 def stop_main_trend_bet_account_route(req: StopMainTrendBetAccountRequest):
     ok, msg = stop_main_trend_bet_account(req.key)
+    return {"ok": ok, "message": msg}
+
+@router.post("/combo-bet/start")
+def start_combo_bet():
+    ok, msg = _check_license()
+    if not ok:
+        return {"ok": False, "message": msg}
+    cfg = {**DEFAULT_COMBO_BET, **get_config("combo_bet_config", {})}
+    ok, msg = _check_account_whitelist("combo_bet", cfg)
+    if not ok:
+        return {"ok": False, "message": msg}
+    return dict(zip(("ok", "message"), TaskManager.get().start("combo_bet", combo_bet_run, cfg)))
+
+@router.post("/combo-bet/stop")
+def stop_combo_bet():
+    ok, msg = TaskManager.get().stop("combo_bet")
     return {"ok": ok, "message": msg}
 
 @router.post("/followbet/start")

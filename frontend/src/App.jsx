@@ -28,6 +28,7 @@ import CustomWinBetPage from './pages/CustomWinBetPage'
 import MainTrendBetPage from './pages/MainTrendBetPage'
 import DrawAnalysisPage from './pages/DrawAnalysisPage'
 import FourCodeWinBetPage from './pages/FourCodeWinBetPage'
+import ComboBetPage from './pages/ComboBetPage'
 
 const { Sider, Content, Header } = Layout
 const { Text } = Typography
@@ -46,6 +47,7 @@ const NAV_ITEMS = [
   { key: '/custom-winbet', icon: <RetweetOutlined />, label: '自定义金额轮换赢冲' },
   { key: '/main-trend-bet', icon: <RetweetOutlined />, label: '主势大小单双追损' },
   { key: '/four-code-winbet', icon: <BarChartOutlined />, label: '4粒码赢冲输缩' },
+  { key: '/combo-bet', icon: <RetweetOutlined />, label: '主势+1-3组合投注' },
   { key: '/draw-analysis', icon: <BarChartOutlined />, label: '开奖记录分析推荐' },
   { key: '/flow', icon: <ProfileOutlined />, label: '投注流水' },
   { key: '/license', icon: <KeyOutlined />, label: '授权管理' },
@@ -97,6 +99,7 @@ function AppLayout({ licenseInfo, onReload }) {
             <Route path="/custom-winbet" element={<CustomWinBetPage />} />
             <Route path="/main-trend-bet" element={<MainTrendBetPage />} />
             <Route path="/four-code-winbet" element={<FourCodeWinBetPage />} />
+            <Route path="/combo-bet" element={<ComboBetPage />} />
             <Route path="/draw-analysis" element={<DrawAnalysisPage />} />
             <Route path="/flow" element={<FlowPage />} />
             <Route path="/license" element={
