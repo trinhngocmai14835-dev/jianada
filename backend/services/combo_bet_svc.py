@@ -82,15 +82,23 @@ def _place_combo(page, cfg: dict, log, account: str) -> bool:
     frame = page.frame(name="frame") or page
     fill = {f"odds_HZ{k + 1}": v for k, v in sums.items()}
     main_amounts.update(sides)
-    ok_main, _ = _place_main_trend_bet(page, {k: v for k, v in sides.items()}, log, account) if sides else (True, {})
-    if sums:
+    side_ids = {"大": "odds_DX1", "小": "odds_DX2", "单": "odds_DS3", "双": "odds_DS4"}
+    fill.update({side_ids[k]: v for k, v in sides.items() if k in side_ids})
+    ok_main = True
+    if fill:
         import json
-        frame.evaluate("""(function(m){
-          Object.keys(m).forEach(function(id){var e=document.querySelector('#'+id);if(e){e.value=String(m[id]);e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));}});
+        result = frame.evaluate("""(function(m){
+          var count=0; Object.keys(m).forEach(function(id){var e=document.querySelector('#'+id);if(e){
+            var d=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value');if(d&&d.set)d.set.call(e,String(m[id]));else e.value=String(m[id]);
+            e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));count++;}});
+          var b=document.querySelector('#btnOk');if(b)b.click();
           var bs=document.querySelectorAll('input[type=button],button');for(var i=0;i<bs.length;i++){if((bs[i].value==='确定'||(bs[i].innerText||'').includes('确定'))&&bs[i].id!=='btnOk'){bs[i].click();break;}}
+          return count;
         })(%s)""" % json.dumps(fill, ensure_ascii=False))
-        time.sleep(1)
-        ok_main = ok_main and True
+        time.sleep(1.5)
+        ok_main = int(result or 0) == len(fill)
+        if ok_main: log(f"[{account}] ✅ 主势下注完成：和值{list(sums)} | 两面{list(sides)}")
+        else: log(f"[{account}] ⚠️ 主势控件未全部找到：找到{result}/{len(fill)}")
     if not ok_main:
         return False
     _goto_page(page, "hm13", log, account)

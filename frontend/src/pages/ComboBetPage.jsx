@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { Alert, Button, Card, Checkbox, Col, Input, InputNumber, Radio, Row, Space, Typography, message } from 'antd'
 import { api } from '../api/client'
+import LogViewer from '../components/LogViewer'
 
 const { Title, Text } = Typography
 const SIDE_KEYS = ['大', '小', '单', '双']
@@ -8,7 +9,7 @@ const SIDE_KEYS = ['大', '小', '单', '双']
 export default function ComboBetPage() {
   const [cfg, setCfg] = useState({ entry_url: 'https://166.tt', safe_code: '', accounts: [{ account: '', password: '', port: 9222 }], main_sums: {}, main_sides: {}, positions: [[], [], []], position_amounts: [100, 100, 100] })
   const [running, setRunning] = useState(false)
-  useEffect(() => { api.getComboBetConfig().then(v => v?.entry_url && setCfg(c => ({ ...c, ...v }))); api.getStatus().then(v => setRunning(v?.combo_bet === 'running')) }, [])
+  useEffect(() => { api.getComboBetConfig().then(v => v?.entry_url && setCfg(c => ({ ...c, ...v }))); const refresh = () => api.getStatus().then(v => setRunning(v?.combo_bet === 'running')); refresh(); const timer = setInterval(refresh, 3000); return () => clearInterval(timer) }, [])
   const save = async () => { const r = await api.saveComboBetConfig(cfg); r.ok === false ? message.error(r.message) : message.success('组合投注配置已保存') }
   const start = async () => { await save(); const r = await api.startComboBet(); r.ok ? (setRunning(true), message.success(r.message || '已启动')) : message.error(r.message) }
   const stop = async () => { const r = await api.stopComboBet(); setRunning(false); message.info(r.message || '已停止') }
@@ -32,5 +33,6 @@ export default function ComboBetPage() {
     <Card title="主势盘两面金额（0表示不投）" style={{ marginBottom: 16 }}><Row gutter={[12, 12]}>{SIDE_KEYS.map(k => <Col span={6} key={k}><Text>{k}</Text><InputNumber min={0} value={cfg.main_sides?.[k] || 0} onChange={v => updateSide(k, v)} style={{ width: '100%' }} /></Col>)}</Row></Card>
     <Card title="单球1–3定位（号码用逗号分隔，各球独立金额）" style={{ marginBottom: 16 }}><Row gutter={12}>{[0, 1, 2].map(i => <Col span={8} key={i}><Text>第{i + 1}球</Text><Input placeholder="例如：0,1,3" value={(cfg.positions?.[i] || []).join(',')} onChange={e => updatePos(i, e.target.value)} /><InputNumber addonBefore="每码" min={1} value={cfg.position_amounts?.[i] || 100} onChange={v => { const a = [...(cfg.position_amounts || [100, 100, 100])]; a[i] = v || 0; setCfg({ ...cfg, position_amounts: a }) }} style={{ width: '100%', marginTop: 8 }} /></Col>)}</Row></Card>
     <Space><Button type="primary" onClick={save}>保存配置</Button>{running ? <Button danger onClick={stop}>停止</Button> : <Button type="primary" onClick={start}>启动组合投注</Button>}</Space>
+    <Card title="运行日志" style={{ marginTop: 16 }}><LogViewer taskId="combo_bet" running={running} /></Card>
   </div>
 }
