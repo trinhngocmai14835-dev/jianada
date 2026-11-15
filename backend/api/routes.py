@@ -60,6 +60,7 @@ from services.main_trend_bet_svc import (
     stop_account as stop_main_trend_bet_account,
 )
 from services.combo_bet_svc import run as combo_bet_run
+from services.trend_follow_bet_svc import run as trend_follow_bet_run
 from services.account_whitelist import (
     get_account_whitelist_status,
     check_accounts_allowed,
@@ -85,6 +86,7 @@ TASK_LABELS = {
     "four_code_winbet": "4粒码赢冲输缩",
     "main_trend_bet": "主势大小单双追损",
     "combo_bet": "主势+1-3组合投注",
+    "trend_follow_bet": "主势分析跟随投注",
 }
 
 
@@ -277,6 +279,18 @@ DEFAULT_COMBO_BET = {
     "draw_delay": 73,
     "take_profit": 0,
     "daily_stop_loss": 0,
+}
+DEFAULT_TREND_FOLLOW_BET = {
+    "entry_url": "https://166.tt", "safe_code": "",
+    "accounts": [{"account": "", "password": "", "port": 9222}],
+    "start_mode": "now", "start_time": "09:00",
+    "enable_size": True, "enable_parity": True,
+    "strategy_mode": "follow", "size_strategy": "follow", "parity_strategy": "follow",
+    "confirm_streak": 2, "size_confirm_streak": 2, "parity_confirm_streak": 2,
+    "size_manual_target": "大", "parity_manual_target": "单",
+    "size_amount_steps": [100], "parity_amount_steps": [100],
+    "bet_window_min": 20, "bet_window_max": 90, "draw_delay": 73,
+    "take_profit": 0, "daily_stop_loss": 0,
 }
 DEFAULT_FOLLOWBET = {
     "market_mode": "number",
@@ -627,6 +641,15 @@ def save_combo_bet_config(data: dict):
     existing.update(data or {})
     set_config("combo_bet_config", existing)
     return {"ok": True}
+
+@router.get("/config/trend-follow-bet")
+def get_trend_follow_bet_config():
+    return {**DEFAULT_TREND_FOLLOW_BET, **get_config("trend_follow_bet_config", {})}
+
+@router.post("/config/trend-follow-bet")
+def save_trend_follow_bet_config(data: dict):
+    existing = {**DEFAULT_TREND_FOLLOW_BET, **get_config("trend_follow_bet_config", {})}; existing.update(data or {})
+    set_config("trend_follow_bet_config", existing); return {"ok": True}
 
 @router.get("/status")
 def get_status():
@@ -1112,6 +1135,20 @@ def start_combo_bet():
 def stop_combo_bet():
     ok, msg = TaskManager.get().stop("combo_bet")
     return {"ok": ok, "message": msg}
+
+@router.post("/trend-follow-bet/start")
+def start_trend_follow_bet():
+    ok, msg = _check_license()
+    if not ok: return {"ok": False, "message": msg}
+    cfg = {**DEFAULT_TREND_FOLLOW_BET, **get_config("trend_follow_bet_config", {})}
+    ok, msg = _check_account_whitelist("trend_follow_bet", cfg)
+    if not ok: return {"ok": False, "message": msg}
+    ok, msg = TaskManager.get().start("trend_follow_bet", trend_follow_bet_run, cfg)
+    return {"ok": ok, "message": msg}
+
+@router.post("/trend-follow-bet/stop")
+def stop_trend_follow_bet():
+    ok, msg = TaskManager.get().stop("trend_follow_bet"); return {"ok": ok, "message": msg}
 
 @router.post("/followbet/start")
 def start_followbet():

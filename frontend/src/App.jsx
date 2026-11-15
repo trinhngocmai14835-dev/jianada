@@ -29,6 +29,7 @@ import MainTrendBetPage from './pages/MainTrendBetPage'
 import DrawAnalysisPage from './pages/DrawAnalysisPage'
 import FourCodeWinBetPage from './pages/FourCodeWinBetPage'
 import ComboBetPage from './pages/ComboBetPage'
+import TrendFollowBetPage from './pages/TrendFollowBetPage'
 
 const { Sider, Content, Header } = Layout
 const { Text } = Typography
@@ -48,6 +49,7 @@ const NAV_ITEMS = [
   { key: '/main-trend-bet', icon: <RetweetOutlined />, label: '主势大小单双追损' },
   { key: '/four-code-winbet', icon: <BarChartOutlined />, label: '4粒码赢冲输缩' },
   { key: '/combo-bet', icon: <RetweetOutlined />, label: '主势+1-3组合投注' },
+  { key: '/trend-follow-bet', icon: <RetweetOutlined />, label: '主势分析跟随投注' },
   { key: '/draw-analysis', icon: <BarChartOutlined />, label: '开奖记录分析推荐' },
   { key: '/flow', icon: <ProfileOutlined />, label: '投注流水' },
   { key: '/license', icon: <KeyOutlined />, label: '授权管理' },
@@ -100,6 +102,7 @@ function AppLayout({ licenseInfo, onReload }) {
             <Route path="/main-trend-bet" element={<MainTrendBetPage />} />
             <Route path="/four-code-winbet" element={<FourCodeWinBetPage />} />
             <Route path="/combo-bet" element={<ComboBetPage />} />
+            <Route path="/trend-follow-bet" element={<TrendFollowBetPage />} />
             <Route path="/draw-analysis" element={<DrawAnalysisPage />} />
             <Route path="/flow" element={<FlowPage />} />
             <Route path="/license" element={
