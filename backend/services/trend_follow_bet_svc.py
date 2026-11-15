@@ -94,7 +94,7 @@ def _run_account(acc, cfg, entry_url, safe_code, chrome_path, stop_event, log):
 
 def _betting_loop(page, account, cfg, stop_event, log):
     _goto_zsp(page)
-    last_issue = None; records = []; pending = {}; steps = {p: 0 for p in PATHS}; start_balance = _get_balance(page) or 0; heartbeat = 0
+    last_issue = None; records = []; pending = {}; last_bet_targets = {}; steps = {p: 0 for p in PATHS}; start_balance = _get_balance(page) or 0; heartbeat = 0
     log(f"[{account}] 主势分析跟随启动 | 大小={'开' if cfg.get('enable_size', True) else '关'} | 单双={'开' if cfg.get('enable_parity', True) else '关'}")
     while not stop_event.is_set():
         live = get_config("trend_follow_bet_config", cfg) or {}; cfg.update(live)
@@ -108,10 +108,11 @@ def _betting_loop(page, account, cfg, stop_event, log):
             issue, draw = result; last_issue = issue; records.append(draw)
             labels = _main_trend_result(draw); log(f"[{account}] 开奖 {issue}: 和值{labels.get('total')} {labels.get('dx')}/{labels.get('ds')}")
             for path in PATHS:
-                if path not in pending or not pending[path]: continue
-                hit = pending[path] == labels.get("dx" if path == "size" else "ds")
+                if path not in last_bet_targets or not last_bet_targets[path]: continue
+                hit = last_bet_targets[path] == labels.get("dx" if path == "size" else "ds")
                 steps[path] = 0 if hit else min(steps[path] + 1, len(_parse_steps(cfg.get(f"{path}_amount_steps"))) - 1)
-                log(f"[{account}] {path} {'命中' if hit else '未中'}：投注{pending[path]}，下一阶金额={_parse_steps(cfg.get(f'{path}_amount_steps'))[steps[path]]}")
+                log(f"[{account}] {path} {'命中' if hit else '未中'}：投注{last_bet_targets[path]}，下一阶金额={_parse_steps(cfg.get(f'{path}_amount_steps'))[steps[path]]}")
+            last_bet_targets = {}
             for path in PATHS:
                 if (path == "size" and not cfg.get("enable_size", True)) or (path == "parity" and not cfg.get("enable_parity", True)): continue
                 target = _choose_target(path, labels, records, {}, cfg)
@@ -125,6 +126,7 @@ def _betting_loop(page, account, cfg, stop_event, log):
                 raw = cfg.get(f"{path}_amount_steps", [100]); vals = _parse_steps(raw); amount = vals[min(steps[path], len(vals)-1)]; amounts[target] = amounts.get(target, 0) + amount; target_steps[path] = amount
             if amounts and _place_main_trend_bet(page, amounts, log, account)[0]:
                 log(f"[{account}] ✅下注生效：{amounts}")
+                last_bet_targets = dict(pending)
                 pending = {}
                 _sleep_interruptible(max(1, _get_countdown(page)) + int(cfg.get("draw_delay", 73)), stop_event)
                 continue
