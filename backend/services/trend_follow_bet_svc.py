@@ -21,6 +21,16 @@ TASK_ID = "trend_follow_bet"
 PATHS = {"size": ("大", "小"), "parity": ("单", "双")}
 
 
+def _risk_stop_reason(profit: float, cfg: dict):
+    take_profit = float(cfg.get("take_profit", 0) or 0)
+    stop_loss = float(cfg.get("daily_stop_loss", 0) or 0)
+    if take_profit > 0 and profit >= take_profit:
+        return "take_profit"
+    if stop_loss > 0 and profit <= -stop_loss:
+        return "daily_stop_loss"
+    return None
+
+
 def _parse_steps(raw, fallback=100):
     vals = raw if isinstance(raw, (list, tuple)) else []
     out = []
@@ -101,8 +111,9 @@ def _betting_loop(page, account, cfg, stop_event, log):
         bal = _get_balance(page)
         if bal is not None:
             profit = bal - start_balance
-            if float(cfg.get("take_profit", 0) or 0) > 0 and profit >= float(cfg["take_profit"]): log(f"[{account}] 达到止盈 {profit:+.2f}"); break
-            if float(cfg.get("daily_stop_loss", 0) or 0) > 0 and profit <= -float(cfg["daily_stop_loss"]): log(f"[{account}] 达到止损 {profit:+.2f}"); break
+            reason = _risk_stop_reason(profit, cfg)
+            if reason == "take_profit": log(f"[{account}] 达到止盈 {profit:+.2f}"); break
+            if reason == "daily_stop_loss": log(f"[{account}] 达到止损 {profit:+.2f}"); break
         result = _get_last_draw_with_issue(page)
         if result and result[0] != last_issue:
             issue, draw = result; last_issue = issue; records.append(draw)
