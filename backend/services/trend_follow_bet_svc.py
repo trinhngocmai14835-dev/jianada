@@ -15,7 +15,8 @@ from services.auto_bet_svc import (
     _get_last_draw_with_issue, _login, _sleep_interruptible,
 )
 from services.main_trend_bet_svc import _main_trend_result, _place_main_trend_bet
-from services.rotate_bet_svc import _wait_until_start
+from services.rotate_bet_svc import _wait_until_start, _get_settled_balance
+from services.settlement_guard import read_stable_draw, is_newer_issue, issue_gap
 
 TASK_ID = "trend_follow_bet"
 PATHS = {"size": ("大", "小"), "parity": ("单", "双")}
@@ -73,6 +74,16 @@ def _choose_target(path, result, records, state, cfg):
     return current
 
 
+def _plan_targets(labels, records, cfg):
+    planned = {}
+    for path in PATHS:
+        if cfg.get("enable_size" if path == "size" else "enable_parity", True):
+            target = _choose_target(path, labels, records, {}, cfg)
+            if target:
+                planned[path] = target
+    return planned
+
+
 def _goto_zsp(page):
     frame = page.frame(name="frame") or page
     url = getattr(frame, "url", "") or ""
@@ -97,40 +108,61 @@ def _run_account(acc, cfg, entry_url, safe_code, chrome_path, stop_event, log):
             try:
                 page = _login(page, context, account, password, entry_url, safe_code, log, target_page="zsp")
                 _wait_until_start(cfg, account, stop_event, log)
-                _betting_loop(page, account, cfg, stop_event, log)
+                if not stop_event.is_set():
+                    _betting_loop(page, account, cfg, stop_event, log)
             finally: browser.close()
     except Exception as exc: log(f"[{account}] 分析跟随异常: {exc}")
 
 
 def _betting_loop(page, account, cfg, stop_event, log):
     _goto_zsp(page)
-    last_issue = None; records = []; pending = {}; last_bet_targets = {}; steps = {p: 0 for p in PATHS}; start_balance = _get_balance(page) or 0; heartbeat = 0
+    last_issue = None
+    placed_anchor = None
+    records = []
+    pending = {}
+    last_bet_targets = {}
+    steps = {p: 0 for p in PATHS}
+    start_balance = _get_settled_balance(page)
+    if start_balance is None:
+        log(f"[{account}] 无法读取起始余额，停止以免止盈止损失效")
+        return
+    heartbeat = 0
     log(f"[{account}] 主势分析跟随启动 | 大小={'开' if cfg.get('enable_size', True) else '关'} | 单双={'开' if cfg.get('enable_parity', True) else '关'}")
     while not stop_event.is_set():
-        live = get_config("trend_follow_bet_config", cfg) or {}; cfg.update(live)
-        bal = _get_balance(page)
+        live = get_config("trend_follow_bet_config", {}) or {}
+        changed = any(cfg.get(k) != v for k, v in live.items())
+        if changed:
+            cfg.update(live)
+            log(f"[{account}] 配置已生效 | 大小={'开' if cfg.get('enable_size') else '关'}:{_parse_steps(cfg.get('size_amount_steps'))} | 单双={'开' if cfg.get('enable_parity') else '关'}:{_parse_steps(cfg.get('parity_amount_steps'))} | 止盈={cfg.get('take_profit')} 止损={cfg.get('daily_stop_loss')}")
+            if records and not last_bet_targets:
+                pending = _plan_targets(_main_trend_result(records[-1]), records, cfg)
+        bal = None if last_bet_targets else _get_settled_balance(page, samples=2, interval=0.2)
         if bal is not None:
             profit = bal - start_balance
             reason = _risk_stop_reason(profit, cfg)
             if reason == "take_profit": log(f"[{account}] 达到止盈 {profit:+.2f}"); break
             if reason == "daily_stop_loss": log(f"[{account}] 达到止损 {profit:+.2f}"); break
-        result = _get_last_draw_with_issue(page)
-        if result and result[0] != last_issue:
-            issue, draw = result; last_issue = issue; records.append(draw)
+        result = read_stable_draw(page, _get_last_draw_with_issue)
+        if result and (last_issue is None or is_newer_issue(result[0], last_issue)):
+            issue, draw = result
             labels = _main_trend_result(draw); log(f"[{account}] 开奖 {issue}: 和值{labels.get('total')} {labels.get('dx')}/{labels.get('ds')}")
-            for path in PATHS:
-                if path not in last_bet_targets or not last_bet_targets[path]: continue
-                hit = last_bet_targets[path] == labels.get("dx" if path == "size" else "ds")
-                steps[path] = 0 if hit else min(steps[path] + 1, len(_parse_steps(cfg.get(f"{path}_amount_steps"))) - 1)
-                log(f"[{account}] {path} {'命中' if hit else '未中'}：投注{last_bet_targets[path]}，下一阶金额={_parse_steps(cfg.get(f'{path}_amount_steps'))[steps[path]]}")
+            if last_bet_targets:
+                if is_newer_issue(issue, placed_anchor) and issue_gap(issue, placed_anchor) == 1:
+                    for path, target in last_bet_targets.items():
+                        hit = target == labels.get("dx" if path == "size" else "ds")
+                        steps[path] = 0 if hit else min(steps[path] + 1, len(_parse_steps(cfg.get(f"{path}_amount_steps"))) - 1)
+                        log(f"[{account}] {path} {'命中' if hit else '未中'}：投注{target}，下一阶金额={_parse_steps(cfg.get(f'{path}_amount_steps'))[steps[path]]}")
+                else:
+                    log(f"[{account}] 期号跳跃，无法确认上一笔结果，保持金额阶梯")
             last_bet_targets = {}
-            for path in PATHS:
-                if (path == "size" and not cfg.get("enable_size", True)) or (path == "parity" and not cfg.get("enable_parity", True)): continue
-                target = _choose_target(path, labels, records, {}, cfg)
-                pending[path] = target
-                if target: log(f"[{account}] {path}策略={cfg.get(f'{path}_strategy', cfg.get('strategy_mode','follow'))}，下一期方向={target}")
+            last_issue = issue
+            records.append(draw)
+            records = records[-100:]
+            pending = _plan_targets(labels, records, cfg)
+            for path, target in pending.items():
+                log(f"[{account}] {path}策略={cfg.get(f'{path}_strategy', 'follow')}，本期方向={target}")
         cd = _get_countdown(page)
-        if cd >= int(cfg.get("bet_window_min", 20)) and cd <= int(cfg.get("bet_window_max", 90)) and pending:
+        if last_issue and placed_anchor != last_issue and cd >= int(cfg.get("bet_window_min", 20)) and cd <= int(cfg.get("bet_window_max", 90)) and pending:
             amounts = {}; target_steps = {}
             for path, target in pending.items():
                 if not target: continue
@@ -138,6 +170,7 @@ def _betting_loop(page, account, cfg, stop_event, log):
             if amounts and _place_main_trend_bet(page, amounts, log, account)[0]:
                 log(f"[{account}] ✅下注生效：{amounts}")
                 last_bet_targets = dict(pending)
+                placed_anchor = last_issue
                 pending = {}
                 _sleep_interruptible(max(1, _get_countdown(page)) + int(cfg.get("draw_delay", 73)), stop_event)
                 continue

@@ -1,7 +1,7 @@
 from datetime import datetime
 
 from services.rotate_bet_svc import _next_alarm, _parse_hhmm
-from services.trend_follow_bet_svc import _choose_target, _risk_stop_reason, _streak
+from services.trend_follow_bet_svc import _choose_target, _plan_targets, _risk_stop_reason, _streak
 
 
 def test_trend_streak_and_follow_target():
@@ -31,3 +31,10 @@ def test_scheduled_start_time_parser_and_next_alarm():
     now = datetime(2026, 11, 15, 8, 0)
     assert _next_alarm((9, 0), now).hour == 9
     assert _next_alarm((7, 0), now).day == 16
+
+
+def test_independent_path_switches_and_manual_direction():
+    draws = [[1, 1, 1]]
+    labels = {"dx": "小", "ds": "单"}
+    cfg = {"enable_size": False, "enable_parity": True, "parity_strategy": "manual", "parity_manual_target": "双"}
+    assert _plan_targets(labels, draws, cfg) == {"parity": "双"}
