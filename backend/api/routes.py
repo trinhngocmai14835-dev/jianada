@@ -8,7 +8,7 @@ from core.db import (get_config, set_config, get_license, save_license,
                      save_draw_record_snapshot, get_latest_draw_record_snapshot)
 from core.license import get_machine_id, validate_license
 from core.task_manager import TaskManager
-from services.follow_bet_svc import run as follow_bet_run, _launch_source_browser
+from services.follow_bet_svc import run as follow_bet_run, _launch_source_browser, _follow_amount_config
 from services.rush_bet_svc import run as rush_bet_run
 from services.rotate_bet_svc import run as rotate_bet_run
 from services.custom_rotate_bet_svc import (
@@ -398,19 +398,9 @@ def debug_queue(task_id: str):
 
 @router.get("/logs/{task_id}")
 def get_task_logs(task_id: str, since: int = 0):
-    """读取任务日志，供前端按 seq 增量轮询。"""
-    import queue as _queue
-    tm = TaskManager.get()
-    q = tm.log_queue(task_id)
-    if q is None:
-        return {"messages": [], "seq": int(since or 0), "status": tm.status(task_id)}
-    messages = []
-    while True:
-        try:
-            messages.append(q.get_nowait())
-        except _queue.Empty:
-            break
-    return {"messages": messages, "seq": int(since or 0) + len(messages), "status": tm.status(task_id)}
+    """Use the shared broadcast history; never compete for the task queue."""
+    from api.ws import get_recent_logs
+    return {**get_recent_logs(task_id, since), "status": TaskManager.get().status(task_id)}
 
 
 @router.get("/config/rushbet")
@@ -428,13 +418,13 @@ def save_rushbet_config(data: dict):
 
 
 def _normalize_followbet(cfg: dict) -> dict:
-    """迁移老配置：跟投账号从固定金额(bet_amount)改为倍数(multiplier)。
-    缺 multiplier 的旧 follower 补默认 1 倍，并去掉废弃的 bet_amount。"""
+    """旧配置默认按倍数，固定模式必须显式选择。"""
     for f in (cfg.get("followers") or []):
         if not isinstance(f, dict):
             continue
         if f.get("multiplier") in (None, ""):
             f["multiplier"] = 1
+        f.setdefault("amount_mode", "multiplier")
         f.pop("bet_amount", None)
     return cfg
 
@@ -447,8 +437,12 @@ def get_followbet_config():
 
 @router.post("/config/followbet")
 def save_followbet_config(data: dict):
-    existing = get_config("followbet_config", DEFAULT_FOLLOWBET)
-    existing.update(data)
+    existing = _normalize_followbet({**DEFAULT_FOLLOWBET, **get_config("followbet_config", {}), **data})
+    try:
+        for follower in existing.get("followers") or []:
+            _follow_amount_config(follower)
+    except (AttributeError, TypeError, ValueError) as exc:
+        return {"ok": False, "message": f"跟投金额配置错误：{exc}"}
     set_config("followbet_config", existing)
     return {"ok": True}
 
@@ -1156,6 +1150,11 @@ def start_followbet():
     if not ok:
         return {"ok": False, "message": msg}
     cfg = _normalize_followbet({**DEFAULT_FOLLOWBET, **get_config("followbet_config", {})})
+    try:
+        for follower in cfg.get("followers") or []:
+            _follow_amount_config(follower)
+    except (AttributeError, TypeError, ValueError) as exc:
+        return {"ok": False, "message": f"跟投金额配置错误：{exc}"}
     ok, msg = _check_account_whitelist("followbet", cfg)
     if not ok:
         return {"ok": False, "message": msg}

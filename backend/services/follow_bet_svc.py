@@ -374,29 +374,30 @@ def _current_domain(browser, prefer_page=None):
     优先用登录后所在页(prefer_page)的域名，其次已登录后台页(/Home/Index、/ReportNew)，
     最后任意 luk 域名。取错域名会导致重拼的报表URL没有会话、抓不到数据。"""
     def dom_of(url):
-        m = re.match(r'(https?://[^/]+)', url or '')
-        return m.group(1) if (m and 'luk.' in m.group(1)) else None
+        parsed = urllib.parse.urlparse(url or '')
+        return f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme in ('http', 'https') and parsed.netloc else None
 
+    pages = []
     if prefer_page is not None:
-        try:
-            d = dom_of(prefer_page.url)
-            if d:
-                return d
-        except Exception:
-            pass
-    candidates = []
+        pages.append(prefer_page)
     try:
         for ctx in browser.contexts:
-            for pg in ctx.pages:
-                d = dom_of(pg.url)
-                if d:
-                    candidates.append((pg.url, d))
+            pages.extend(ctx.pages)
     except Exception:
         pass
-    for url, d in candidates:   # 优先已登录后台页，避免选到登录页
-        if '/Home/Index' in url or '/ReportNew' in url:
-            return d
-    return candidates[0][1] if candidates else None
+    # Prefer the current backend home over old report tabs left open on a previous domain.
+    for prefix in ('/home/index', '/reportnew/'):
+        for page in pages:
+            try:
+                url = page.url or ''
+                path = urllib.parse.urlparse(url).path.lower()
+                if path.startswith(prefix):
+                    domain = dom_of(url)
+                    if domain:
+                        return domain
+            except Exception:
+                continue
+    return None
 
 
 def _current_agent_ids(browser):
@@ -433,8 +434,12 @@ def _rebuild_report_url(url, domain, today, uid=None, login_id=None):
     固定不变的只有 querydata 里的 userid/orgId(客户身份)；域名/日期/代理身份都实时替换。"""
     parsed = urllib.parse.urlparse(url)
     params = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+    if "querydata" not in params:
+        raise ValueError("链接缺少 querydata，无法确认客户和日期")
     if "querydata" in params:
         qd = json.loads(params["querydata"][0])
+        if not isinstance(qd, dict) or not qd.get("userid"):
+            raise ValueError("链接缺少客户 userid")
         qd["startDate"] = today
         qd["endDate"] = today
         params["querydata"] = [json.dumps(qd, ensure_ascii=False, separators=(",", ":"))]
@@ -446,6 +451,22 @@ def _rebuild_report_url(url, domain, today, uid=None, login_id=None):
         f"{k}={urllib.parse.quote(v[0], safe='')}" for k, v in params.items())
     base = domain or (parsed.scheme + "://" + parsed.netloc)
     return f"{base}{parsed.path}?{new_query}"
+
+
+def _target_page_matches(page, rebuilt, domain, today):
+    """A redirect to login or a different customer/date is not a valid report."""
+    try:
+        actual = urllib.parse.urlparse(page.url)
+        expected = urllib.parse.urlparse(rebuilt)
+        details = json.loads(urllib.parse.parse_qs(actual.query).get('querydata', ['{}'])[0])
+        original = json.loads(urllib.parse.parse_qs(expected.query)['querydata'][0])
+        return bool(actual.scheme == urllib.parse.urlparse(domain).scheme
+                    and actual.netloc == urllib.parse.urlparse(domain).netloc
+                    and actual.path.lower() == expected.path.lower()
+                    and isinstance(details, dict) and details.get('userid') == original.get('userid')
+                    and details.get('startDate') == today and details.get('endDate') == today)
+    except (KeyError, TypeError, ValueError):
+        return False
 
 
 def _merge_groups(all_groups: dict, g: dict):
@@ -650,6 +671,33 @@ def _cdp_login(browser, account, password, entry_url, safe_code, log, line_kw="�
         return None
 
 
+def _follow_amount_config(follower):
+    import math
+    mode = follower.get("amount_mode", "multiplier")
+    if mode not in ("multiplier", "fixed"):
+        raise ValueError("金额方式无效")
+    try:
+        value = float(follower.get("fixed_amount") if mode == "fixed" else follower.get("multiplier", 1))
+    except (TypeError, ValueError):
+        raise ValueError("请填写有效的固定金额或倍数")
+    if not math.isfinite(value) or value <= 0 or (mode == "fixed" and not value.is_integer()):
+        raise ValueError("固定金额必须为正整数，倍数必须大于0")
+    return mode, int(value) if mode == "fixed" else value
+
+
+def _prepare_follow_bets(pending, market_mode, amount_config):
+    mode, value = amount_config
+    result = {}
+    for bet in pending:
+        amount = value if mode == "fixed" else max(1, int(round(bet["amount"] * value)))
+        if market_mode == "main_trend":
+            result[bet["num"]] = result.get(bet["num"], 0) + amount
+        else:
+            numbers = result.setdefault(bet["pos"], {})
+            numbers[bet["num"]] = numbers.get(bet["num"], 0) + amount
+    return result
+
+
 def run(config: dict, stop_event: threading.Event, log_queue: queue.Queue):
     def log(msg: str):
         log_queue.put({"time": datetime.now().strftime("%H:%M:%S"), "msg": msg})
@@ -669,8 +717,13 @@ def run(config: dict, stop_event: threading.Event, log_queue: queue.Queue):
     follow_targets = [t for t in (config.get("follow_targets") or [])
                       if isinstance(t, dict) and str(t.get("url", "")).strip()]
 
-    follower_str = ', '.join(f"{f.get('port')}({f.get('multiplier', 1)}倍)" for f in followers_cfg)
-    log(f"跟投服务启动 | 采集端口:{source_port} | 跟投:{follower_str} | 模式:镜像全跟·按客户金额倍数")
+    try:
+        follower_amounts = [_follow_amount_config(f) for f in followers_cfg]
+    except (TypeError, AttributeError, ValueError) as exc:
+        log(f"❌ 跟投金额配置错误：{exc}")
+        return
+    follower_str = ', '.join(f"{f.get('port')}({v}元/笔固定)" if mode == 'fixed' else f"{f.get('port')}({v}倍)" for f, (mode, v) in zip(followers_cfg, follower_amounts))
+    log(f"跟投服务启动 | 采集端口:{source_port} | 跟投:{follower_str} | 镜像客户注单")
 
     with sync_playwright() as p:
         # ── 步骤1：自动启动采集端口Chrome，连接后等待登录 ──────────
@@ -707,14 +760,8 @@ def run(config: dict, stop_event: threading.Event, log_queue: queue.Queue):
 
         # ── 步骤2：点开始后立即开好并登录所有跟投账号（不等采集注单明细）──
         followers = []
-        for f_cfg in followers_cfg:
+        for f_cfg, amount_config in zip(followers_cfg, follower_amounts):
             port_b = str(f_cfg.get("port", "9223"))
-            try:
-                mult = float(f_cfg.get("multiplier", 1))
-            except (TypeError, ValueError):
-                mult = 1.0
-            if mult <= 0:
-                mult = 1.0
             f_acc = f_cfg.get("account", "")
             f_pwd = f_cfg.get("password", "")
 
@@ -749,66 +796,94 @@ def run(config: dict, stop_event: threading.Event, log_queue: queue.Queue):
 
             pg = _find_cd_page(bb) or _get_real_page(bb) or \
                 (bb.contexts[0].pages[0] if bb.contexts and bb.contexts[0].pages else None)
-            followers.append((port_b, mult, bb, pg, f_acc))
-            log(f"[B:{port_b}] 已就绪 {mult}倍跟投")
+            followers.append((port_b, amount_config, bb, pg, f_acc))
+            desc = f"固定{amount_config[1]}元/客户注单" if amount_config[0] == "fixed" else f"{amount_config[1]}倍"
+            log(f"[B:{port_b}] 已就绪 {desc}跟投")
 
         if not followers:
             log("❌ 无可用的跟投账号")
             return
 
-        # 目标客户未结明细：用【当前登录域名+今天日期】重拼粘贴的URL并自动打开（免去手动找页面）
-        target_pages = []
-        if follow_targets:
+        # Open each configured target only after an authenticated backend is visible.
+        # Keep each target separate; never substitute an unrelated report tab.
+        target_pages = {}
+        target_retry_at = {}
+        target_day = {}
+        def ensure_targets(today):
             dom = _current_domain(browser_a, src_login_page)
-            cur_uid, cur_login = _current_agent_ids(browser_a)
-            today = _business_day_str()
-            log(f"[A] 目标客户URL重拼：域名 {dom or '(用原URL域名)'} | 代理 {cur_login or '(未取到,用原loginId)'} | 日期 {today}")
-            opened = 0
-            for t in follow_targets:
+            if not dom:
+                log("[A] 等待采集账号登录代理后台，尚未取得当前登录域名")
+                return []
+            uid, login_id = _current_agent_ids(browser_a)
+            now = time.monotonic()
+            active = []
+            for idx, target in enumerate(follow_targets):
+                page = target_pages.get(idx)
                 try:
-                    rebuilt = _rebuild_report_url(str(t["url"]).strip(), dom, today, cur_uid, cur_login)
+                    expected_url = _rebuild_report_url(str(target['url']).strip(), dom, today, uid, login_id)
+                    valid = (page is not None and not page.is_closed() and
+                             target_day.get(idx) == today and _target_page_matches(page, expected_url, dom, today))
+                except Exception:
+                    valid = False
+                if valid:
+                    active.append(page)
+                    continue
+                if now < target_retry_at.get(idx, 0):
+                    continue
+                target_retry_at[idx] = now + 10
+                name = target.get('label') or f'客户{idx + 1}'
+                tp = None
+                try:
+                    rebuilt = _rebuild_report_url(str(target['url']).strip(), dom, today, uid, login_id)
                     tp = browser_a.contexts[0].new_page()
-                    tp.goto(rebuilt, wait_until="domcontentloaded", timeout=30000)
-                    target_pages.append(tp)
-                    opened += 1
-                    log(f"[A] 已自动打开目标客户未结明细页: {t.get('label') or ''}")
-                except Exception as e:
-                    log(f"[A] 打开目标未结明细失败({t.get('label') or ''}): {e}")
-            if opened:
-                time.sleep(2)
+                    log(f"[A] {name}重拼明细 | 域名 {dom} | 业务日期 {today}，正在打开")
+                    tp.goto(rebuilt, wait_until='domcontentloaded', timeout=30000)
+                    if not _target_page_matches(tp, rebuilt, dom, today):
+                        raise ValueError('页面跳转后域名、客户或业务日期未确认，请检查登录和注单明细链接')
+                    old = target_pages.get(idx)
+                    target_pages[idx] = tp
+                    target_day[idx] = today
+                    active.append(tp)
+                    if old is not None:
+                        try: old.close()
+                        except Exception: pass
+                    log(f"[A] {name}已打开并确认未结明细 | 业务日期 {today}")
+                except Exception as exc:
+                    if tp is not None:
+                        try: tp.close()
+                        except Exception: pass
+                    log(f"[A] {name}明细未就绪，将重试：{exc}")
+            return active
 
-        # ── 步骤3：等待采集账号的注单明细页 ──
-        if follow_targets:
-            log(f"⏳ 已按目标客户自动打开未结明细页，开始监控...")
-        else:
-            log(f"⏳ 跟投账号已就绪。请把采集账号页面点到【报表查询 → 注单明细】（可提前打开空的未结明细页，等待中...）")
         report_pages = []
         last_remind = 0
         while not stop_event.is_set():
-            report_pages = []
-            try:
-                for ctx in browser_a.contexts:
-                    for pg in ctx.pages:
-                        if _is_report_page(pg):
-                            report_pages.append(pg)
-            except Exception:
-                pass
-            if report_pages:
-                log(f"[A] 找到{len(report_pages)}个注单明细标签页")
-                break
-            now = time.time()
+            if follow_targets:
+                report_pages = ensure_targets(_business_day_str())
+                if len(report_pages) == len(follow_targets):
+                    log(f"[A] 已确认 {len(report_pages)}/{len(follow_targets)} 个目标客户明细")
+                    break
+            else:
+                try:
+                    report_pages = [pg for ctx in browser_a.contexts for pg in ctx.pages if _is_report_page(pg)]
+                except Exception:
+                    report_pages = []
+                if report_pages:
+                    log(f"[A] 找到{len(report_pages)}个注单明细标签页")
+                    break
+            now = time.monotonic()
             if now - last_remind >= 10:
-                log(f"⏳ 未找到注单明细页，请点击【即时注单】或【报表查询 → 注单明细】...")
+                log(f"[A] 等待注单明细 | 已确认 {len(report_pages)}/{len(follow_targets)}；请检查登录和链接")
                 last_remind = now
-            time.sleep(3)
-
-        if not report_pages:
+            _sleep_interruptible(3, stop_event)
+        if not report_pages or stop_event.is_set():
             log("⏹️ 已取消等待")
             return
         page_a = report_pages[0]
-        _navigate_today(page_a, log)
+        if not follow_targets:
+            _navigate_today(page_a, log)
         last_report_day = _business_day_str()
-        log(f"[A] 开始监控注单明细")
+        log("[A] 开始监控注单明细")
 
         # 初始化分页
         try:
@@ -830,41 +905,16 @@ def run(config: dict, stop_event: threading.Event, log_queue: queue.Queue):
 
         _cd_miss = 0
         while not stop_event.is_set():
-            # 跨天后自动重拼目标客户未结明细地址，避免持续监控昨天的日期。
             today = _business_day_str()
-            if today != last_report_day:
-                if follow_targets:
-                    try:
-                        dom = _current_domain(browser_a, src_login_page)
-                        cur_uid, cur_login = _current_agent_ids(browser_a)
-                        log(f"[A] 检测到跨天，重拼目标客户URL | 日期 {today} | 代理 {cur_login or '(沿用原loginId)'}")
-                        for old_page in target_pages:
-                            try:
-                                old_page.close()
-                            except Exception:
-                                pass
-                        target_pages = []
-                        opened = 0
-                        for t in follow_targets:
-                            try:
-                                rebuilt = _rebuild_report_url(str(t["url"]).strip(), dom, today, cur_uid, cur_login)
-                                tp = browser_a.contexts[0].new_page()
-                                tp.goto(rebuilt, wait_until="domcontentloaded", timeout=30000)
-                                target_pages.append(tp)
-                                opened += 1
-                                log(f"[A] 已切换到今日目标未结明细: {t.get('label') or ''}")
-                            except Exception as e:
-                                log(f"[A] 跨天打开目标未结明细失败({t.get('label') or ''}): {e}")
-                        if opened:
-                            time.sleep(2)
-                            last_report_day = today
-                        else:
-                            log("[A] 跨天重拼未成功，下一轮继续重试")
-                    except Exception as e:
-                        log(f"[A] 跨天重拼目标URL失败，下一轮继续重试: {e}")
-                else:
-                    _navigate_today(page_a, log)
-                    last_report_day = today
+            if follow_targets:
+                report_pages = ensure_targets(today)
+                if len(report_pages) != len(follow_targets):
+                    log(f"[A] 目标明细未全部就绪 {len(report_pages)}/{len(follow_targets)}，等待重试")
+                    _sleep_interruptible(3, stop_event)
+                    continue
+            elif today != last_report_day:
+                _navigate_today(page_a, log)
+                last_report_day = today
 
             real = _find_cd_page(cd_browser)
             if real:
@@ -910,11 +960,8 @@ def run(config: dict, stop_event: threading.Event, log_queue: queue.Queue):
 
             # 投注窗口：刷新报表
             log(f"📡 倒计时{cd}s，抓取注单...")
-            report_pages = []
-            for ctx in browser_a.contexts:
-                for pg in ctx.pages:
-                    if _is_report_page(pg):
-                        report_pages.append(pg)
+            if not follow_targets:
+                report_pages = [pg for ctx in browser_a.contexts for pg in ctx.pages if _is_report_page(pg)]
             if not report_pages:
                 log("⚠️  未找到注单明细页，请确认采集账号浏览器已打开注单明细")
                 time.sleep(REFRESH)
@@ -927,6 +974,7 @@ def run(config: dict, stop_event: threading.Event, log_queue: queue.Queue):
                     _merge_groups(all_groups, g)
 
             if not all_groups:
+                log(f"[A] 已检查 {len(report_pages)} 个明细页，当前没有可跟注单或读取失败，{REFRESH}秒后再检查")
                 time.sleep(REFRESH)
                 continue
 
@@ -942,19 +990,13 @@ def run(config: dict, stop_event: threading.Event, log_queue: queue.Queue):
 
                 # 镜像全跟：每个跟投账号各自按倍数跟客户全部注单
                 # 按 (跟投端口, 下注编号, 球, 号) 独立去重 —— 客户每注每账号只跟一次，失败下次自动补
-                for f_port, f_mult, f_browser, f_page, f_acc in followers:
+                for f_port, f_amount_config, f_browser, f_page, f_acc in followers:
                     acc_tag = f_acc or f_port
                     pending = [b for b in bets
                                if (f_port, b["betId"], b["pos"], b["num"]) not in done_set]
                     if not pending:
                         continue
-                    my_bets: dict = {}
-                    for b in pending:
-                        amt = max(1, int(round(b["amount"] * f_mult)))   # 客户金额×倍数
-                        if market_mode == "main_trend":
-                            my_bets[b["num"]] = my_bets.get(b["num"], 0) + amt
-                        else:
-                            my_bets.setdefault(b["pos"], {})[b["num"]] = amt
+                    my_bets = _prepare_follow_bets(pending, market_mode, f_amount_config)
                     rp = _find_cd_page(f_browser) or _get_real_page(f_browser) or f_page
                     if market_mode == "main_trend":
                         ok, _odds = _place_main_trend_bet(rp, my_bets, log, acc_tag)
@@ -973,7 +1015,8 @@ def run(config: dict, stop_event: threading.Event, log_queue: queue.Queue):
                             amt_desc = ", ".join(
                                 f"{pos}:{'/'.join(str(a) for a in na.values())}"
                                 for pos, na in my_bets.items())
-                        log(f"    ✅ [{acc_tag}] {f_mult}倍 跟客户{len(pending)}注 [{amt_desc}] | 累计{total_bets}注")
+                        desc = f"固定{f_amount_config[1]}元/客户注单" if f_amount_config[0] == "fixed" else f"{f_amount_config[1]}倍"
+                        log(f"    ✅ [{acc_tag}] {desc} 跟客户{len(pending)}注 [{amt_desc}] | 累计{total_bets}注")
                     else:
                         log(f"    ❌ [{acc_tag}] 失败，下次重试")
                     time.sleep(1)

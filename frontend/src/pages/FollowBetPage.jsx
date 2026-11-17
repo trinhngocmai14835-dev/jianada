@@ -38,7 +38,8 @@ export default function FollowBetPage() {
     try {
       const vals = await form.validateFields()
       setSaving(true)
-      await api.saveFollowBetConfig(vals)
+      const res = await api.saveFollowBetConfig(vals)
+      if (res.ok === false) { message.error(res.message || '保存失败'); return null }
       message.success('配置已保存')
       return vals
     } catch {
@@ -49,7 +50,7 @@ export default function FollowBetPage() {
   }
 
   const handleStart = async () => {
-    await handleSave()
+    if (!(await handleSave())) return
     setLoading(true)
     const res = await api.startFollowBet()
     message.info(res.message)
@@ -93,7 +94,7 @@ export default function FollowBetPage() {
 
       <Alert
         type="info"
-        message="填好安全码 + 采集/各跟投账号的账号密码后，点「开始」即自动打开浏览器并登录：采集账号登录后请手动点到「报表查询→注单明细」页（可提前打开空的未结明细页挂着）；跟投账号自动登录到下注页。账号密码留空则走手动登录。客户一下注即自动按倍数贴身跟投。"
+        message="采集账号登录后打开客户注单明细；每个跟投账号可选择按倍数或固定金额。固定金额按客户每笔注单计算，同一选项的多笔注单会合计。修改配置后需要停止并重新启动。"
         style={{ marginBottom: 16 }}
         showIcon
       />
@@ -169,12 +170,21 @@ export default function FollowBetPage() {
                                   <Input placeholder="9223" />
                                 </Form.Item>
                               </Col>
-                              <Col span={12}>
-                                <Form.Item name={[name, 'multiplier']} label="跟投倍数" rules={[{ required: true }]} tooltip="每注金额 = 客户该注金额 × 倍数，支持小数">
-                                  <InputNumber style={{ width: '100%' }} placeholder="2" min={0.1} step={0.5} />
-                                </Form.Item>
-                              </Col>
                             </Row>
+                            <Form.Item name={[name, 'amount_mode']} label="金额方式" initialValue="multiplier">
+                              <Radio.Group><Radio value="multiplier">按倍数</Radio><Radio value="fixed">固定金额</Radio></Radio.Group>
+                            </Form.Item>
+                            <Form.Item noStyle shouldUpdate>
+                              {({ getFieldValue }) => getFieldValue(['followers', name, 'amount_mode']) === 'fixed' ? (
+                                <Form.Item name={[name, 'fixed_amount']} label="每笔客户注单固定金额" rules={[{ required: true, type: 'number', min: 1, message: '请输入正整数金额' }, { validator: (_, v) => v == null || Number.isInteger(v) ? Promise.resolve() : Promise.reject(new Error('请输入正整数金额')) }]} tooltip="每笔客户注单按这个金额跟投；同一选项多笔注单的金额会相加。">
+                                  <InputNumber style={{ width: '100%' }} min={1} precision={0} placeholder="例如 100" />
+                                </Form.Item>
+                              ) : (
+                                <Form.Item name={[name, 'multiplier']} label="跟投倍数" rules={[{ required: true, type: 'number', min: 0.001, message: '请输入大于0的倍数' }]} tooltip="每注金额 = 客户该注金额 × 倍数，支持小数">
+                                  <InputNumber style={{ width: '100%' }} placeholder="2" min={0.001} step={0.5} />
+                                </Form.Item>
+                              )}
+                            </Form.Item>
                             <Row gutter={8}>
                               <Col span={12}>
                                 <Form.Item name={[name, 'account']} label="跟投账号" tooltip="填了则点开始自动打开浏览器并登录，无需手动开/登录">
@@ -189,7 +199,7 @@ export default function FollowBetPage() {
                             </Row>
                           </Card>
                         ))}
-                        <Button type="dashed" onClick={() => add({ port: '9223', multiplier: 1 })} block icon={<PlusOutlined />}>
+                        <Button type="dashed" onClick={() => add({ port: '9223', multiplier: 1, amount_mode: 'multiplier' })} block icon={<PlusOutlined />}>
                           添加跟投账号
                         </Button>
                       </>
